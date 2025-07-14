@@ -47,18 +47,18 @@ def _evaluate_hand_strength(cards: jnp.ndarray) -> jnp.ndarray:
     # La puntuación se basa en la rareza de la mano (mayor es mejor) y un kicker
     # para desempates. El kicker se calcula a partir de los rangos ordenados.
     sorted_ranks = jnp.sort(rank_counts)[::-1]
-    kicker_score = jnp.dot(sorted_ranks, 13**jnp.arange(13, 0, -1))
+    kicker_score = jnp.dot(sorted_ranks, 13**jnp.arange(13, 0, -1)).astype(jnp.float32)
 
     # Asignar puntuación basada en el tipo de mano
-    score = kicker_score
-    score = jax.lax.cond(counts[2] >= 1, lambda: 1e10 + kicker_score, lambda: score) # Par
-    score = jax.lax.cond(counts[2] >= 2, lambda: 2e10 + kicker_score, lambda: score) # Dos Pares
-    score = jax.lax.cond(counts[3] >= 1, lambda: 3e10 + kicker_score, lambda: score) # Trío
-    score = jax.lax.cond(is_straight,    lambda: 4e10 + jnp.max(ranks), lambda: score) # Escalera
-    score = jax.lax.cond(is_flush,       lambda: 5e10 + kicker_score, lambda: score) # Color
-    score = jax.lax.cond(counts[3] >= 1 and counts[2] >= 2, lambda: 6e10 + kicker_score, lambda: score) # Full
-    score = jax.lax.cond(counts[4] >= 1, lambda: 7e10 + kicker_score, lambda: score) # Póker
-    score = jax.lax.cond(is_straight & is_flush, lambda: 8e10 + jnp.max(ranks), lambda: score) # Escalera de Color
+    score = kicker_score.astype(jnp.float32)
+    score = jax.lax.cond(counts[2] >= 1, lambda: 1e10 + kicker_score, lambda: score.astype(jnp.float32)) # Par
+    score = jax.lax.cond(counts[2] >= 2, lambda: 2e10 + kicker_score, lambda: score.astype(jnp.float32)) # Dos Pares
+    score = jax.lax.cond(counts[3] >= 1, lambda: 3e10 + kicker_score, lambda: score.astype(jnp.float32)) # Trío
+    score = jax.lax.cond(is_straight,    lambda: 4e10 + jnp.max(ranks).astype(jnp.float32), lambda: score.astype(jnp.float32)) # Escalera
+    score = jax.lax.cond(is_flush,       lambda: 5e10 + kicker_score, lambda: score.astype(jnp.float32)) # Color
+    score = jax.lax.cond((counts[3] >= 1) & (counts[2] >= 2), lambda: 6e10 + kicker_score, lambda: score.astype(jnp.float32)) # Full
+    score = jax.lax.cond(counts[4] >= 1, lambda: 7e10 + kicker_score, lambda: score.astype(jnp.float32)) # Póker
+    score = jax.lax.cond(is_straight & is_flush, lambda: 8e10 + jnp.max(ranks).astype(jnp.float32), lambda: score.astype(jnp.float32)) # Escalera de Color
 
     return score
 
