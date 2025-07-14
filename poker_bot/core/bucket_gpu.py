@@ -30,6 +30,7 @@ void bucket_kernel(
     unsigned int* __restrict__ out_idx,
     unsigned long long* __restrict__ table_keys,
     unsigned int* __restrict__ table_vals,
+    unsigned int* __restrict__ counter,
     const unsigned int N,
     const unsigned int mask)
 {
@@ -43,8 +44,8 @@ void bucket_kernel(
     for (int attempt = 0; attempt < 3; attempt++) {
         unsigned long long old = atomicCAS(&table_keys[slot], 0ULL, key);
         if (old == 0ULL) {
-            // new key: assign index
-            unsigned int idx = atomicAdd(&table_vals[0], 1u);
+            // new key: assign index using explicit counter
+            unsigned int idx = atomicAdd(counter, 1u);
             table_vals[slot] = idx;
             out_idx[tid] = idx;
             return;
@@ -84,7 +85,7 @@ def build_or_get_indices(keys_gpu, table_keys, table_vals, counter):
     _bucket_kernel(
         (blocks,), (threads,),
         (keys_gpu, indices_gpu,
-         table_keys, table_vals,
+         table_keys, table_vals, counter,
          cp.uint32(N), cp.uint32(table_size - 1))
     )
     cp.cuda.Device().synchronize()
@@ -99,7 +100,31 @@ def build_or_get_indices_ephemeral(keys_gpu, table_size=2**26):
     return build_or_get_indices(keys_gpu, table_keys, table_vals, counter)
 
 # -----------------------------
-# 4. Benchmark
+# 4. Test del counter
+# -----------------------------
+def test_counter():
+    """Test mínimo para verificar que el counter funciona"""
+    print("Testing counter functionality...")
+    
+    # Crear datos de prueba
+    keys = cp.random.randint(0, 10000, 2000, dtype=cp.uint64)
+    table_keys = cp.zeros(2**16, dtype=cp.uint64)
+    table_vals = cp.zeros(2**16, dtype=cp.uint32)
+    counter = cp.zeros(1, dtype=cp.uint32)
+    
+    print(f"Before: counter[0] = {int(counter[0])}")
+    
+    # Ejecutar build_or_get_indices
+    indices = build_or_get_indices(keys, table_keys, table_vals, counter)
+    
+    print(f"After: counter[0] = {int(counter[0])}")
+    print(f"Expected: ~{len(cp.unique(keys))} unique keys")
+    print(f"Actual unique indices: {len(cp.unique(indices))}")
+    
+    return int(counter[0])
+
+# -----------------------------
+# 5. Benchmark
 # -----------------------------
 def benchmark():
     N = 1_000_000
