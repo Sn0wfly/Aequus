@@ -39,24 +39,24 @@ void bucket_kernel(
     unsigned long long key = keys[tid];
     unsigned int slot = (unsigned int)(key & mask);
 
-    // OPTIMIZACIÓN: Máximo 3 intentos para evitar loops infinitos
+    // MAX 3 attempts to avoid infinite loops
     for (int attempt = 0; attempt < 3; attempt++) {
         unsigned long long old = atomicCAS(&table_keys[slot], 0ULL, key);
         if (old == 0ULL) {
-            // nueva key: asignar índice
+            // new key: assign index
             unsigned int idx = atomicAdd(&table_vals[0], 1u);
             table_vals[slot] = idx;
             out_idx[tid] = idx;
             return;
         }
         if (old == key) {
-            // key existente
+            // existing key
             out_idx[tid] = table_vals[slot];
             return;
         }
         slot = (slot + 1) & mask;
     }
-    // Fallback: usar slot directo
+    // Fallback: use direct slot
     out_idx[tid] = slot;
 }
 '''
