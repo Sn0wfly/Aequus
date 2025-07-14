@@ -322,7 +322,8 @@ class PokerTrainer:
         
         # Generar datos sintéticos para bucketing (placeholder)
         positions = jnp.arange(num_players)[None, :].repeat(batch_size, axis=0)
-        pot_sizes = jnp.full((batch_size, num_players), game_results['final_pot'])
+        # Corregir broadcasting: expandir final_pot para cada jugador
+        pot_sizes = game_results['final_pot'][:, None].repeat(num_players, axis=1)
         stack_sizes = jnp.full((batch_size, num_players), 100.0)  # Stack fijo por ahora
         
         # Convertir JAX arrays a CuPy para bucketing GPU
