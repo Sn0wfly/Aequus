@@ -38,6 +38,13 @@ except ImportError:
     CYTHON_AVAILABLE = False
     logger.warning("⚠️ Cython fast hasher: NOT AVAILABLE, falling back to Python")
 
+def make_dummy_cf_values(batch_size, num_players, num_actions):
+    """Devuelve cf_values aleatorios para probar el pipeline."""
+    total = batch_size * num_players
+    rng = jax.random.PRNGKey(42)
+    cf_values = jax.random.normal(rng, (total, num_actions))
+    return cf_values
+
 @dataclass
 class TrainerConfig:
     """Configuration for PokerTrainer"""
@@ -363,7 +370,16 @@ class PokerTrainer:
         # 4. CFR step GPU
         regrets_gpu = jax.device_put(self.regrets)
         strategy_gpu = jax.device_put(self.strategies)
-        new_regrets, new_strategy = cfr_step_gpu(states, regrets_gpu, strategy_gpu)
+        
+        # Generate dummy cf_values
+        cf_values = make_dummy_cf_values(batch_size, num_players, self.config.num_actions)
+        cf_values_gpu = jax.device_put(cf_values)
+
+        # Apply scatter update
+        new_regrets, new_strategy = _static_vectorized_scatter_update(
+            regrets_gpu, strategy_gpu, indices_cpu, cf_values_gpu,
+            self.config.learning_rate, self.config.temperature
+        )
 
         # 5. Actualizar arrays
         self.regrets = new_regrets
