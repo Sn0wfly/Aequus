@@ -315,15 +315,35 @@ class PokerTrainer:
         num_active = jnp.sum(game_results['hole_cards'][:, :, 0] != -1, axis=1)
 
         # 2. GPU Bucketing + Indexado
-        indices_gpu = self._batch_get_buckets_gpu(
-            game_results['hole_cards'],
-            game_results['community_cards'],
-            game_results['positions'],
-            game_results['pot_sizes'],
-            game_results['stack_sizes'],
-            num_active
-        )
+        # La simulación devuelve: 'hole_cards', 'final_community', 'payoffs', 'final_pot'
+        # Necesitamos generar datos sintéticos para bucketing
+        batch_size = game_results['hole_cards'].shape[0]
+        num_players = game_results['hole_cards'].shape[1]
+        
+        # Generar datos sintéticos para bucketing (placeholder)
+        positions = jnp.arange(num_players)[None, :].repeat(batch_size, axis=0)
+        pot_sizes = jnp.full((batch_size, num_players), game_results['final_pot'])
+        stack_sizes = jnp.full((batch_size, num_players), 100.0)  # Stack fijo por ahora
+        
+        # Convertir JAX arrays a CuPy para bucketing GPU
         import cupy as cp
+        import numpy as np
+        
+        hole_cards_cpu = np.array(game_results['hole_cards'])
+        community_cards_cpu = np.array(game_results['final_community'][:, None, :].repeat(num_players, axis=1))
+        positions_cpu = np.array(positions)
+        pot_sizes_cpu = np.array(pot_sizes)
+        stack_sizes_cpu = np.array(stack_sizes)
+        num_active_cpu = np.array(num_active[:, None].repeat(num_players, axis=1))
+        
+        indices_gpu = self._batch_get_buckets_gpu(
+            hole_cards_cpu,
+            community_cards_cpu,
+            positions_cpu,
+            pot_sizes_cpu,
+            stack_sizes_cpu,
+            num_active_cpu
+        )
         indices_cpu = cp.asnumpy(indices_gpu)
 
         # 3. Convertir a tensores de estado JAX
