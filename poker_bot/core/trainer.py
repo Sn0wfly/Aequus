@@ -236,14 +236,23 @@ class PokerTrainer:
         """
         import cupy as cp
         from .bucket_gpu import pack_keys, build_or_get_indices
-        
+        import numpy as np
+        # Aplanar todos los arrays a (batch_size * num_players, ...)
+        B, N = hole_cards.shape[:2]
+        hole_cards_flat = hole_cards.reshape(-1, hole_cards.shape[-1])
+        community_cards_flat = community_cards.reshape(-1, community_cards.shape[-1])
+        positions_flat = positions.reshape(-1)
+        pot_sizes_flat = pot_sizes.reshape(-1)
+        stack_sizes_flat = stack_sizes.reshape(-1)
+        num_act_flat = num_actives.reshape(-1)
+
         # 1. Convertir a CuPy arrays
-        hole_hash = cp.asarray([hash(tuple(c)) % 65536 for c in hole_cards])
-        round_id  = cp.asarray([len(c[c >= 0]) for c in community_cards])
-        position  = cp.asarray(positions)
-        stack_b   = cp.asarray((stack_sizes // 10).astype(int) & 0xF)
-        pot_b     = cp.asarray((pot_sizes // 5).astype(int) & 0xF)
-        num_act   = cp.asarray(num_actives)
+        hole_hash = cp.asarray([hash(tuple(c)) % 65536 for c in hole_cards_flat])
+        round_id  = cp.asarray([len(c[c >= 0]) for c in community_cards_flat])
+        position  = cp.asarray(positions_flat)
+        stack_b   = cp.asarray((stack_sizes_flat // 10).astype(int) & 0xF)
+        pot_b     = cp.asarray((pot_sizes_flat // 5).astype(int) & 0xF)
+        num_act   = cp.asarray(num_act_flat)
 
         # 2. Empaquetar claves
         keys_gpu = pack_keys(hole_hash, round_id, position,
