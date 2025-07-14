@@ -122,7 +122,8 @@ def _simulate_single_game_vectorized(rng_key: jnp.ndarray, game_config: dict) ->
 
     # Salida compatible con JAX: hole_cards de tamaño fijo
     hole_cards_out = jnp.full((MAX_PLAYERS, 2), -1, dtype=hole_cards.dtype)
-    hole_cards_out = hole_cards_out.at[:players].set(hole_cards[:players])
+    active_hole_cards = lax.dynamic_slice(hole_cards, (0, 0), (players, 2))
+    hole_cards_out = hole_cards_out.at[:players, :].set(active_hole_cards)
 
     # Un resultado simplificado para el trainer, que es lo que importa
     return {
