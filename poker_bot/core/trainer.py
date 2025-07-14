@@ -350,40 +350,46 @@ class PokerTrainer:
 
     def train_step(self, game_results: dict):
         """
-        Paso de entrenamiento simplificado, sin rng_key.
+        Paso de entrenamiento con control explícito de dispositivos.
         """
         self.total_games += self.config.batch_size
         batch_size = game_results['payoffs'].shape[0]
         num_players = game_results['payoffs'].shape[1]
         total_info_sets = batch_size * num_players
         logger.info(f"   🚀 DEFINITIVE processing: {batch_size} games × {num_players} players = {total_info_sets} info sets")
-        # 1. 🚀 VECTORIZED GPU processing
+
+        # 1. 🚀 PROCESAMIENTO VECTORIZADO EN GPU
         vectorized_results = self._vectorized_info_set_processing(game_results)
-        cf_values = vectorized_results['cf_values']
-        # 2. 🧠 CPU-GPU BRIDGE: Map info sets to indices
-        indices = self._map_info_sets_to_indices(game_results)
-        # --- SOLUCIÓN TAREA 2: Mover los datos de entrenamiento a la GPU ---
-        # Solo necesitamos los cf_values y los índices para la actualización.
-        # Suponiendo que vectorized_results['cf_values'] ya está disponible:
+        
+        # 2. 🧠 PUENTE GPU -> CPU PARA HASHING
+        indices_cpu = self._map_info_sets_to_indices(game_results)
+
+        # SI NO HAY ÍNDICES NUEVOS, SALIR TEMPRANO
+        if len(indices_cpu) == 0:
+            logger.warning("No se procesaron nuevos índices en este batch.")
+            return
+
+        # 3. 🚀 PREPARACIÓN PARA LA ACTUALIZACIÓN EN GPU
+        # Mueve los arrays que vienen del CPU a la GPU
+        indices_gpu = jax.device_put(indices_cpu, device=self._main_device)
         cf_values_gpu = jax.device_put(vectorized_results['cf_values'], device=self._main_device)
-        indices_gpu = jax.device_put(indices, device=self._main_device)
-        # 3. 🚀 GPU SCATTER UPDATE:
-        if len(indices) > 0:
-            self._vectorized_scatter_update(indices_gpu, cf_values_gpu[:len(indices_gpu)])
+
+        # 4. 🚀 ACTUALIZACIÓN EN GPU
+        self._vectorized_scatter_update(indices_gpu, cf_values_gpu[:len(indices_gpu)])
         # Update counters
-        self.total_info_sets += len(indices)
+        self.total_info_sets += len(indices_cpu)
         # Compute metrics
         avg_payoff = jnp.mean(game_results['payoffs'])
         # Calculate strategy entropy
-        if len(indices) > 0:
-            strategies_subset = self.strategies[indices]
+        if len(indices_cpu) > 0:
+            strategies_subset = self.strategies[indices_cpu]
             entropy = -jnp.sum(strategies_subset * jnp.log(strategies_subset + 1e-8), axis=1)
             avg_entropy = jnp.mean(entropy)
         else:
             avg_entropy = 0.0
         logger.info(f"   Iteración {self.iteration+1} completada.")
         logger.info(f"   📊 Unique info sets: {self.total_unique_info_sets:,}")
-        logger.info(f"   📊 Info sets processed: {len(indices)}")
+        logger.info(f"   📊 Info sets processed: {len(indices_cpu)}")
         logger.info(f"   📊 Growth events: {self.growth_events}")
         logger.info(f"   📊 Array size: {self.config.max_info_sets:,}")
         return {
@@ -391,7 +397,7 @@ class PokerTrainer:
             'total_games': self.total_games,
             'total_info_sets': self.total_info_sets,
             'unique_info_sets': self.total_unique_info_sets,
-            'info_sets_processed': len(indices),
+            'info_sets_processed': len(indices_cpu),
             'avg_payoff': avg_payoff,
             'strategy_entropy': avg_entropy,
             'q_values_count': self.total_unique_info_sets,
