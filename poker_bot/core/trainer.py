@@ -336,33 +336,24 @@ class PokerTrainer:
         batch_size = game_results['hole_cards'].shape[0]
         num_players = game_results['hole_cards'].shape[1]
         
-        # Generar datos reales por jugador (usar datos del juego real)
-        batch_size, num_players = game_results['hole_cards'].shape[:2]
-        
-        # Usar datos reales del juego
-        positions = jnp.tile(jnp.arange(num_players), (batch_size, 1))
-        stack_sizes = jnp.full_like(game_results['final_pot'][:, None], 100.0).repeat(num_players, axis=1)
-        pot_sizes = game_results['final_pot'][:, None].repeat(num_players, axis=1)
+        # Generar datos reales por jugador (no repetidos)
+        rng = jax.random.PRNGKey(self.iteration)
+        rng_batch = jax.random.split(rng, self.config.batch_size)
+
+        positions = jnp.tile(jnp.arange(6), (self.config.batch_size, 1))
+        stack_sizes = jnp.full((self.config.batch_size, 6), 100.0)  # o usa jax.random
+        pot_sizes = game_results['final_pot'][:, None] * jnp.ones((1, 6))
         num_active = (game_results['hole_cards'][:, :, 0] != -1).astype(jnp.int32)
-        
-        # Convertir JAX arrays a CuPy para bucketing GPU
-        import cupy as cp
+
+        # Convertir a numpy/cupy
         import numpy as np
-        
-        hole_cards_cpu = np.array(game_results['hole_cards'])
-        community_cards_cpu = np.array(game_results['final_community'][:, None, :].repeat(num_players, axis=1))
-        positions_cpu = np.array(positions)
-        pot_sizes_cpu = np.array(pot_sizes)
-        stack_sizes_cpu = np.array(stack_sizes)
-        num_active_cpu = np.array(num_active)
-        
         indices_gpu = self._batch_get_buckets_gpu(
-            hole_cards_cpu,
-            community_cards_cpu,
-            positions_cpu,
-            pot_sizes_cpu,
-            stack_sizes_cpu,
-            num_active_cpu
+            np.array(game_results['hole_cards']),
+            np.array(game_results['final_community'][:, None, :].repeat(6, axis=1)),
+            np.array(positions),
+            np.array(pot_sizes),
+            np.array(stack_sizes),
+            np.array(num_active)
         )
         indices_cpu = cp.asnumpy(indices_gpu)
 
