@@ -84,12 +84,15 @@ def _simulate_single_game_vectorized(rng_key: jnp.ndarray, game_config: dict) ->
     rng_key, deck_key = jax.random.split(rng_key)
     deck = jax.random.permutation(deck_key, jnp.arange(52))
     
-    num_hole_cards = players * 2
+    num_hole_cards = MAX_PLAYERS * 2
     hole_cards = lax.dynamic_slice(deck, (0,), (num_hole_cards,))
-    hole_cards = hole_cards.reshape((players, 2))
+    hole_cards = hole_cards.reshape((MAX_PLAYERS, 2))
     
     community_start_index = num_hole_cards
     community_cards_full = lax.dynamic_slice(deck, (community_start_index,), (5,))
+    
+    # Solo usamos los primeros 'players' en la lógica de juego
+    # ... el resto de la función debe usar hole_cards[:players] y stacks[:players] según corresponda ...
     
     # --- Rondas de Apuestas (simplificado para JIT) ---
     # Esto es una abstracción. Un motor de juego real tendría un bucle complejo.
