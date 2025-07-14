@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 import pyspiel
-from open_spiel.python.algorithms import cfr_jax
+from open_spiel.python.jax import cfr
 
 def cfr_step_gpu(batch_states, regrets_prev, strategy_prev, lr=0.1):
     """Un solo paso de CFR-JAX sobre GPU.
@@ -10,7 +10,7 @@ def cfr_step_gpu(batch_states, regrets_prev, strategy_prev, lr=0.1):
     strategy_prev: (B, num_actions) tensor JAX
     retorna (new_regrets, new_strategy) ambos en GPU
     """
-    return cfr_jax.step(batch_states,
-                        regrets_prev,
-                        strategy_prev,
-                        learning_rate=lr) 
+    return cfr.step(batch_states,
+                    regrets_prev,
+                    strategy_prev,
+                    learning_rate=lr) 
