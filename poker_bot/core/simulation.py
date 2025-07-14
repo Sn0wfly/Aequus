@@ -119,12 +119,16 @@ def _simulate_single_game_vectorized(rng_key: jnp.ndarray, game_config: dict) ->
     final_pot = big_blind * 20 
     payoffs = jnp.zeros(MAX_PLAYERS)
     payoffs = payoffs.at[winner_idx].set(final_pot)
-    
+
+    # Salida compatible con JAX: hole_cards de tamaño fijo
+    hole_cards_out = jnp.full((MAX_PLAYERS, 2), -1, dtype=hole_cards.dtype)
+    hole_cards_out = hole_cards_out.at[:players].set(hole_cards[:players])
+
     # Un resultado simplificado para el trainer, que es lo que importa
     return {
         'payoffs': payoffs,
         'final_community': community_cards_full,
-        'hole_cards': jnp.pad(hole_cards, ((0, MAX_PLAYERS - players), (0,0))),
+        'hole_cards': hole_cards_out,
         'final_pot': final_pot,
     }
 
