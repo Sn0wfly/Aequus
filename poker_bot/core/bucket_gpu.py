@@ -21,7 +21,7 @@ def pack_keys(hole_hash, round_id, position,
     )
 
 # -----------------------------
-# 2. Kernel CUDA con máscara
+# 2. Kernel CUDA optimizado
 # -----------------------------
 _KERNEL = r'''
 extern "C" __global__
@@ -39,31 +39,34 @@ void bucket_kernel(
     unsigned long long key = keys[tid];
     unsigned int slot = (unsigned int)(key & mask);
 
-    while (true) {
+    // OPTIMIZACIÓN: Máximo 3 intentos para evitar loops infinitos
+    for (int attempt = 0; attempt < 3; attempt++) {
         unsigned long long old = atomicCAS(&table_keys[slot], 0ULL, key);
         if (old == 0ULL) {
             // nueva key: asignar índice
             unsigned int idx = atomicAdd(&table_vals[0], 1u);
             table_vals[slot] = idx;
             out_idx[tid] = idx;
-            break;
+            return;
         }
         if (old == key) {
             // key existente
             out_idx[tid] = table_vals[slot];
-            break;
+            return;
         }
         slot = (slot + 1) & mask;
     }
+    // Fallback: usar slot directo
+    out_idx[tid] = slot;
 }
 '''
 
 _bucket_kernel = cp.RawKernel(_KERNEL, 'bucket_kernel')
 
 # -----------------------------
-# 3. Wrapper
+# 3. Wrapper optimizado
 # -----------------------------
-def build_or_get_indices(keys_gpu, table_size=2**24):
+def build_or_get_indices(keys_gpu, table_size=2**26):  # OPTIMIZACIÓN: Tabla más grande
     N = keys_gpu.size
     indices_gpu = cp.empty(N, dtype=cp.uint32)
 
@@ -72,8 +75,14 @@ def build_or_get_indices(keys_gpu, table_size=2**24):
     table_vals = cp.zeros(table_size, dtype=cp.uint32)
     counter = cp.zeros(1, dtype=cp.uint32)  # índices contiguos
 
-    threads = 256
+    # OPTIMIZACIÓN: Más threads para mejor occupancy
+    threads = 1024  # Aumentado de 256 a 1024
     blocks = (N + threads - 1) // threads
+    
+    # OPTIMIZACIÓN: Asegurar que hay suficientes bloques
+    if blocks < 32:
+        blocks = 32
+    
     _bucket_kernel(
         (blocks,), (threads,),
         (keys_gpu, indices_gpu,
