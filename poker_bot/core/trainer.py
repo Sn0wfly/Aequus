@@ -347,6 +347,7 @@ class PokerTrainer:
 
         # Convertir a numpy/cupy
         import numpy as np
+        import cupy as cp
         indices_gpu = self._batch_get_buckets_gpu(
             np.array(game_results['hole_cards']),
             np.array(game_results['final_community'][:, None, :].repeat(6, axis=1)),
