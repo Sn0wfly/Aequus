@@ -139,8 +139,8 @@ def _simulate_single_game_vectorized(rng_key: jnp.ndarray, game_config: dict) ->
 @jax.jit
 def batch_simulate_real_holdem(rng_keys: jnp.ndarray, game_config: dict) -> dict:
     """
-    Vectoriza la simulación de una única partida a través de un batch de
-    claves aleatorias para una ejecución masiva en paralelo en la GPU.
+    Vectoriza la simulación y asegura la ejecución en GPU.
     """
-    # jax.vmap es la magia que ejecuta la simulación N veces en paralelo.
-    return jax.vmap(_simulate_single_game_vectorized, in_axes=(0, None))(rng_keys, game_config)
+    # FORZAR ENTRADAS A GPU
+    rng_keys_gpu = jax.device_put(rng_keys)  # Mueve las claves a la GPU por defecto
+    return jax.vmap(_simulate_single_game_vectorized, in_axes=(0, None))(rng_keys_gpu, game_config)

@@ -117,10 +117,20 @@ class PokerTrainer:
         self.total_info_sets = 0
         self.total_unique_info_sets = 0
         self.growth_events = 0
-        
-        # 🧠 GPU Arrays (pre-allocated for maximum speed)
-        self.q_values = jnp.zeros((config.max_info_sets, config.num_actions), dtype=config.dtype)
-        self.strategies = jnp.ones((config.max_info_sets, config.num_actions), dtype=config.dtype) / config.num_actions
+
+        # --- Forzar Ubicación en GPU ---
+        try:
+            gpu_device = jax.devices('gpu')[0]
+            logger.info(f"✅ GPU detectada. Asignando arrays principales a: {gpu_device}")
+        except IndexError:
+            gpu_device = jax.devices('cpu')[0]
+            logger.warning(f"⚠️ No se encontró GPU. Usando CPU: {gpu_device}")
+
+        initial_q_values = jnp.zeros((config.max_info_sets, config.num_actions), dtype=config.dtype)
+        self.q_values = jax.device_put(initial_q_values, device=gpu_device)
+
+        initial_strategies = jnp.ones((config.max_info_sets, config.num_actions), dtype=config.dtype) / config.num_actions
+        self.strategies = jax.device_put(initial_strategies, device=gpu_device)
         
         # 🧠 CPU Memory Management (the brain)
         self.info_set_hashes: Dict[str, int] = {}
@@ -151,24 +161,27 @@ class PokerTrainer:
         return self.info_set_hashes[info_hash]
     
     def _grow_arrays(self):
-        """Grow GPU arrays when full (CPU operation)"""
         old_size = self.config.max_info_sets
         new_size = int(old_size * self.config.growth_factor)
         logger.info(f"🔄 Growing arrays from {old_size:,} to {new_size:,}")
-        
-        # Create new larger arrays
+
+        # Obtener el dispositivo actual de los arrays
+        target_device = self.q_values.device()
+        logger.info(f"🔄 Creciendo arrays y asignando a dispositivo: {target_device}")
+
+        # Crear nuevos arrays más grandes
         new_q_values = jnp.zeros((new_size, self.config.num_actions), dtype=self.config.dtype)
         new_strategies = jnp.ones((new_size, self.config.num_actions), dtype=self.config.dtype) / self.config.num_actions
-        
-        # Copy existing data using old_size
+
+        # Copiar datos existentes
         new_q_values = new_q_values.at[:old_size].set(self.q_values)
         new_strategies = new_strategies.at[:old_size].set(self.strategies)
-        
-        # Update arrays
-        self.q_values = new_q_values
-        self.strategies = new_strategies
+
+        # Mover los nuevos arrays al dispositivo correcto
+        self.q_values = jax.device_put(new_q_values, device=target_device)
+        self.strategies = jax.device_put(new_strategies, device=target_device)
         self.config.max_info_sets = new_size
-        
+
         self.growth_events += 1
         logger.info(f"✅ Arrays grown successfully (event #{self.growth_events})")
     
