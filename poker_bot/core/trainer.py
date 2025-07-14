@@ -239,37 +239,35 @@ class PokerTrainer:
                                positions, pot_sizes, stack_sizes,
                                num_actives):
         """
-        GPU-only bucketing + lookup persistente.
+        Fine-grained GPU bucketing + lookup persistente.
         Devuelve indices_gpu (CuPy array uint32)
         """
         import cupy as cp
         import numpy as np
-        from .bucket_gpu import pack_keys, build_or_get_indices
+        from .bucket_gpu import build_or_get_indices
+        from .bucket_fine import fine_bucket_kernel_wrapper
         
-        # Aplanar todos los arrays a (batch_size * num_players, ...)
-        B, N = hole_cards.shape[:2]
-        hole_cards_flat = hole_cards.reshape(-1, hole_cards.shape[-1])
-        community_cards_flat = community_cards.reshape(-1, community_cards.shape[-1])
-        positions_flat = positions.reshape(-1)
-        pot_sizes_flat = pot_sizes.reshape(-1)
-        stack_sizes_flat = stack_sizes.reshape(-1)
-        num_act_flat = num_actives.reshape(-1)
-
         # 1. Convertir a CuPy arrays
-        hole_hash = cp.asarray([hash(tuple(c)) % 65536 for c in hole_cards_flat])
-        round_id  = cp.asarray([len(c[c >= 0]) for c in community_cards_flat])
-        position  = cp.asarray(positions_flat)
-        stack_b   = cp.asarray((stack_sizes_flat // 1).astype(int) & 0xFF)  # 256 buckets
-        pot_b     = cp.asarray((pot_sizes_flat // 1).astype(int) & 0xFF)    # 256 buckets
-        num_act   = cp.asarray(num_act_flat)
-
-        # 2. Empaquetar claves
-        keys_gpu = pack_keys(hole_hash, round_id, position,
-                             stack_b, pot_b, num_act)
-
+        hole_cards_gpu = cp.asarray(hole_cards, dtype=cp.int32)
+        community_cards_gpu = cp.asarray(community_cards, dtype=cp.int32)
+        positions_gpu = cp.asarray(positions, dtype=cp.int32)
+        stack_sizes_gpu = cp.asarray(stack_sizes, dtype=cp.float32)
+        pot_sizes_gpu = cp.asarray(pot_sizes, dtype=cp.float32)
+        num_active_gpu = cp.asarray(num_actives, dtype=cp.int32)
+        
+        # 2. Llamar a kernel CUDA de bucketing fino
+        keys_gpu = fine_bucket_kernel_wrapper(
+            hole_cards_gpu,
+            community_cards_gpu,
+            positions_gpu,
+            stack_sizes_gpu,
+            pot_sizes_gpu,
+            num_active_gpu
+        )
+        
         # 3. Lookup/inserción en tabla persistente
         indices_gpu = build_or_get_indices(
-            keys_gpu,
+            keys_gpu.reshape(-1),  # Flatten for lookup
             self.table_keys,
             self.table_vals,
             self.counter
