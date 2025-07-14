@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 # 🚀 Import Cython module for ultra-fast hashing
 try:
-    from .fast_hasher import map_hashes_cython
+    from .hasher import map_hashes_cython
     CYTHON_AVAILABLE = True
     logger.info("🚀 Cython fast hasher: ENABLED for maximum performance")
 except ImportError:
