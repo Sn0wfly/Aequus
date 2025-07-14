@@ -24,8 +24,6 @@ setup(
     # Las dependencias de compilación se quedan en pyproject.toml
     # (Asegúrate de que el pyproject.toml que te di antes sigue ahí)
 
-    ext_modules=cythonize(extensions, language_level="3"),
-
     install_requires=[
         'jax[cuda12_pip]',
         'numpy',
@@ -34,7 +32,6 @@ setup(
         'tqdm',
         'psutil',
         'phevaluator',
-        'Cython',
     ],
     
     entry_points={
