@@ -50,7 +50,7 @@ setup(
         'PyYAML',
         'tqdm',
         'psutil',
-        'phevaluator'
+        'phevaluator',
         # Cython ya no es estrictamente necesario aquí, porque solo se usa para compilar,
         # pero es bueno dejarlo por claridad.
         'Cython',
