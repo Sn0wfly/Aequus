@@ -240,7 +240,7 @@ class PokerTrainer:
         """
         🧠 CPU-GPU BRIDGE: Optimizado para minimizar la transferencia de datos.
         """
-        # --- SOLUCIÓN TAREA 2: Transferencia de datos mínima ---
+        # --- Transferencia de datos mínima ---
         data_for_hashing = {
             'hole_cards': game_results['hole_cards'],
             'final_community': game_results['final_community'],
@@ -248,11 +248,45 @@ class PokerTrainer:
             'payoffs': game_results['payoffs']
         }
         data_for_hashing_np = jax.device_get(data_for_hashing)
-        # ... lógica de hashing sobre data_for_hashing_np ...
-        # Aquí deberías tener tu lógica de hashing, que produce indices_to_update
-        # indices_to_update = ...
-        # Por ahora, dejo un placeholder:
-        indices_to_update = []  # <-- REEMPLAZA ESTO POR TU LÓGICA REAL
+        hole_cards_np = data_for_hashing_np['hole_cards']
+        community_cards_np = data_for_hashing_np['final_community']
+        pot_sizes_np = data_for_hashing_np['final_pot']
+        payoffs_np = data_for_hashing_np['payoffs']
+
+        num_games = payoffs_np.shape[0]
+        num_players = payoffs_np.shape[1]
+        total_info_sets = num_games * num_players
+
+        data_to_hash = []
+        for i in range(total_info_sets):
+            game_idx = i // num_players
+            player_id = i % num_players
+            hole_cards = hole_cards_np[game_idx, player_id]
+            community_cards = community_cards_np[game_idx]
+            pot_size = pot_sizes_np[game_idx]
+            payoff = payoffs_np[game_idx, player_id]
+            data_to_hash.append((player_id, hole_cards, community_cards, pot_size, payoff))
+
+        # 🚀 ULTRA-FAST HASHING: Use Cython for maximum performance
+        if CYTHON_AVAILABLE:
+            logger.info(f"   🚀 CYTHON HASHING: Processing {total_info_sets} info sets at C speed")
+            all_hashes_flat = map_hashes_cython(data_to_hash)
+        else:
+            # Fallback to multiprocessing if Cython not available
+            num_processes = multiprocessing.cpu_count()
+            chunk_size = (total_info_sets + num_processes - 1) // num_processes
+            chunks = [data_to_hash[i:i + chunk_size] for i in range(0, total_info_sets, chunk_size)]
+            logger.info(f"   🚀 MULTIPROCESSING: Using {num_processes} processes for {total_info_sets} info sets")
+            logger.info(f"   📊 Chunk size: {chunk_size} info sets per process")
+            with multiprocessing.Pool(processes=num_processes) as pool:
+                all_hashes = pool.map(_process_info_set_chunk, chunks)
+            all_hashes_flat = [h for sublist in all_hashes for h in sublist]
+
+        indices_to_update = []
+        for info_hash in all_hashes_flat:
+            index = self._get_or_create_index(info_hash)
+            indices_to_update.append(index)
+
         return np.array(indices_to_update, dtype=np.int32)
     
     def _vectorized_scatter_update(self, indices: jnp.ndarray, cf_values: jnp.ndarray) -> None:
