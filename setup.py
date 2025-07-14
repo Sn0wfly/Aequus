@@ -1,35 +1,30 @@
+# setup.py (Versión a prueba de balas)
 from setuptools import setup, find_packages, Extension
+from Cython.Build import cythonize
+import numpy
 
-def get_extensions():
-    """Define las extensiones de Cython."""
-    import numpy
-    from Cython.Build import cythonize
-    extensions = [
-        Extension(
-            "poker_bot.core.hasher",
-            ["poker_bot/core/hasher.pyx"],
-            include_dirs=[numpy.get_include()]
-        )
-    ]
-    return cythonize(extensions, language_level="3")
+# La definición de la extensión ahora es más explícita
+# Se le dice que el "nombre del módulo" que se importará es poker_bot.core.hasher
+# y que la fuente está en poker_bot/core/hasher.pyx
+extensions = [
+    Extension(
+        "poker_bot.core.hasher",
+        ["poker_bot/core/hasher.pyx"],
+        include_dirs=[numpy.get_include()]
+    )
+]
 
 setup(
     name="aequus-poker-bot",
-    version="1.0.1", # Incrementamos la versión para forzar la actualización
-    packages=find_packages(),
+    version="1.0.2", # Incrementamos de nuevo
+    packages=find_packages(), # Encuentra automáticamente el paquete poker_bot
+
+    # No necesitamos 'package_data' si 'ext_modules' está bien configurado
     
-    # Añadimos esto para asegurar que el .pyx se incluya
-    package_data={
-        'poker_bot.core': ['*.pyx'],
-    },
-    
-    setup_requires=[
-        'setuptools>=64',
-        'cython>=3.0.0',
-        'numpy>=1.21.0'
-    ],
-    
-    ext_modules=get_extensions(),
+    # Las dependencias de compilación se quedan en pyproject.toml
+    # (Asegúrate de que el pyproject.toml que te di antes sigue ahí)
+
+    ext_modules=cythonize(extensions, language_level="3"),
 
     install_requires=[
         'jax[cuda12_pip]',
