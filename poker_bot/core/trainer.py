@@ -285,9 +285,9 @@ class PokerTrainer:
         for i in range(initial_iteration, initial_iteration + num_iterations):
             self.iteration = i
             
-            # Generar claves para el batch
-            rng_key = jax.random.PRNGKey(i)
-            rng_keys = jax.random.split(rng_key, self.config.batch_size)
+            # Generar claves para el batch (una subclave por elemento)
+            base_rng = jax.random.PRNGKey(i)
+            rngs = jax.random.split(base_rng, self.config.batch_size)  # Una subclave por elemento
             
             # Configuración del juego (puede ser más dinámica en el futuro)
             game_config = {
@@ -297,9 +297,9 @@ class PokerTrainer:
                 'big_blind': 2.0
             }
             
-            # Simulación en GPU
+            # Simulación en GPU con datos únicos por elemento
             from .simulation import batch_simulate_real_holdem
-            game_results = batch_simulate_real_holdem(rng_keys, game_config)
+            game_results = batch_simulate_real_holdem(rngs, game_config)
             
             # Paso de entrenamiento (CPU + GPU)
             self.train_step(game_results)
