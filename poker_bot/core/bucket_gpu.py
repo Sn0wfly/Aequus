@@ -25,7 +25,7 @@ def pack_keys(hole_hash, round_id, position,
     )
 
 # -----------------------------
-# 2. Hash-table simple en GPU
+# 2. Hash-table optimizada en GPU
 # -----------------------------
 _HASH_KERNEL = r'''
 extern "C" __global__
@@ -41,7 +41,8 @@ void build_or_get_indices(
     if (tid >= N) return;
 
     unsigned long long key = keys[tid];
-    unsigned int slot = (unsigned int)(key % table_size);
+    // OPTIMIZACIÓN 1: Bitwise AND en vez de módulo (más rápido)
+    unsigned int slot = (unsigned int)(key & (table_size - 1));
 
     while (true) {
         unsigned long long old = atomicCAS(&table_keys[slot], 0ULL, key);
@@ -57,7 +58,8 @@ void build_or_get_indices(
             }
             break;
         }
-        slot = (slot + 1) % table_size;
+        // OPTIMIZACIÓN 2: Linear probing más eficiente
+        slot = (slot + 1) & (table_size - 1);
     }
 }
 '''
@@ -66,9 +68,9 @@ void build_or_get_indices(
 _build_or_get_indices_kernel = cp.RawKernel(_HASH_KERNEL, 'build_or_get_indices')
 
 # -----------------------------
-# 3. Wrapper Python
+# 3. Wrapper Python optimizado
 # -----------------------------
-def build_or_get_indices(keys_gpu, table_size=2**21):
+def build_or_get_indices(keys_gpu, table_size=2**24):  # OPTIMIZACIÓN 3: Tabla más grande
     """
     keys_gpu: CuPy array uint64
     Devuelve: indices_gpu CuPy array uint32
@@ -80,7 +82,8 @@ def build_or_get_indices(keys_gpu, table_size=2**21):
     table_keys = cp.zeros(table_size, dtype=cp.uint64)  # 0 == empty
     table_vals = cp.zeros(table_size, dtype=cp.uint32)  # índice
 
-    threads = 256
+    # OPTIMIZACIÓN 4: Más threads por bloque para mejor occupancy
+    threads = 512  # Aumentado de 256 a 512
     blocks = (N + threads - 1) // threads
     _build_or_get_indices_kernel(
         (blocks,), (threads,),
