@@ -66,23 +66,21 @@ _bucket_kernel = cp.RawKernel(_KERNEL, 'bucket_kernel')
 # -----------------------------
 # 3. Wrapper optimizado
 # -----------------------------
-def build_or_get_indices(keys_gpu, table_size=2**26):  # OPTIMIZACIÓN: Tabla más grande
+def build_or_get_indices(keys_gpu, table_keys, table_vals, counter):
+    """
+    keys_gpu: CuPy array uint64
+    table_keys: CuPy array uint64 (persistente, tamaño potencia de 2)
+    table_vals: CuPy array uint32 (persistente, tamaño igual a table_keys)
+    counter: CuPy array uint32 shape=(1,) (persistente)
+    Devuelve: indices_gpu CuPy array uint32
+    """
     N = keys_gpu.size
     indices_gpu = cp.empty(N, dtype=cp.uint32)
-
-    # table_size debe ser potencia de 2
-    table_keys = cp.zeros(table_size, dtype=cp.uint64)
-    table_vals = cp.zeros(table_size, dtype=cp.uint32)
-    counter = cp.zeros(1, dtype=cp.uint32)  # índices contiguos
-
-    # OPTIMIZACIÓN: Más threads para mejor occupancy
-    threads = 1024  # Aumentado de 256 a 1024
+    table_size = table_keys.size
+    threads = 1024
     blocks = (N + threads - 1) // threads
-    
-    # OPTIMIZACIÓN: Asegurar que hay suficientes bloques
     if blocks < 32:
         blocks = 32
-    
     _bucket_kernel(
         (blocks,), (threads,),
         (keys_gpu, indices_gpu,
@@ -91,6 +89,14 @@ def build_or_get_indices(keys_gpu, table_size=2**26):  # OPTIMIZACIÓN: Tabla m�
     )
     cp.cuda.Device().synchronize()
     return indices_gpu
+
+# Versión efímera para benchmark rápido
+# (crea y borra la tabla hash en cada llamada)
+def build_or_get_indices_ephemeral(keys_gpu, table_size=2**26):
+    table_keys = cp.zeros(table_size, dtype=cp.uint64)
+    table_vals = cp.zeros(table_size, dtype=cp.uint32)
+    counter = cp.zeros(1, dtype=cp.uint32)
+    return build_or_get_indices(keys_gpu, table_keys, table_vals, counter)
 
 # -----------------------------
 # 4. Benchmark
@@ -111,7 +117,7 @@ def benchmark():
     
     cp.cuda.Device().synchronize()
     t0 = time.perf_counter()
-    indices = build_or_get_indices(keys)
+    indices = build_or_get_indices_ephemeral(keys)
     cp.cuda.Device().synchronize()
     t1 = time.perf_counter()
     elapsed = t1 - t0
