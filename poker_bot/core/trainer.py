@@ -23,6 +23,9 @@ import pickle
 from poker_bot.evaluator import HandEvaluator
 from functools import lru_cache
 from joblib import Parallel, delayed
+import pyspiel
+from poker_bot.core.cfr_gpu import cfr_step_gpu
+import functools
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +111,9 @@ class PokerTrainer:
         initial_strategies = jnp.ones((config.max_info_sets, config.num_actions), dtype=config.dtype) / config.num_actions
         self.strategies = jax.device_put(initial_strategies, device=self._main_device)
         
+        initial_regrets = jnp.zeros((config.max_info_sets, config.num_actions), dtype=config.dtype)
+        self.regrets = jax.device_put(initial_regrets, device=self._main_device)
+
         # 🧠 CPU Memory Management (the brain)
         self.info_set_hashes: Dict[str, int] = {}
         self.info_set_data: Dict[int, Dict[str, Any]] = {}
@@ -203,60 +209,17 @@ class PokerTrainer:
         self.growth_events += 1
         logger.info(f"✅ Arrays grown successfully (event #{self.growth_events})")
     
-    @partial(jax.jit, static_argnums=(0,))
-    def _vectorized_info_set_processing(self, game_data: Dict[str, jnp.ndarray]) -> Dict[str, jnp.ndarray]:
-        """VECTORIZED info set processing on GPU - returns only JAX arrays"""
-        batch_size = game_data['payoffs'].shape[0]
-        num_players = game_data['payoffs'].shape[1]
-        total_info_sets = batch_size * num_players
-        
-        # Extract game data
-        hole_cards = game_data['hole_cards']  # (batch, players, 2)
-        final_community = game_data['final_community']  # (batch, 5)
-        payoffs = game_data['payoffs']  # (batch, players)
-        final_pots = game_data['final_pot']  # (batch,)
-        
-        # Flatten for vectorized processing
-        flat_hole_cards = hole_cards.reshape(-1, 2)
-        flat_payoffs = payoffs.reshape(-1)
-        flat_final_pots = jnp.repeat(final_pots, num_players)
-        flat_community = jnp.repeat(final_community[:, None, :], num_players, axis=1).reshape(-1, 5)
-        
-        # Vectorized hand strength calculation
-        def calculate_hand_strength_vectorized(hole_cards, community_cards):
-            hole_sum = jnp.sum(hole_cards, axis=1)
-            community_sum = jnp.sum(community_cards, axis=1)
-            return (hole_sum + community_sum) / 100.0
-        
-        hand_strengths = calculate_hand_strength_vectorized(flat_hole_cards, flat_community)
-        
-        # Vectorized counterfactual values
-        def compute_cf_values_vectorized(payoffs):
-            return jnp.stack([
-                payoffs * 0.5,  # Fold: lose some
-                payoffs * 1.0,  # Call: neutral
-                payoffs * 1.5,  # Bet: win more
-                payoffs * 2.0   # Raise: win most
-            ], axis=1)
-        
-        cf_values = compute_cf_values_vectorized(flat_payoffs)
-        
-        # Create player IDs and game indices for later use
-        player_ids = jnp.arange(total_info_sets) % num_players
-        game_indices = jnp.arange(total_info_sets) // num_players
-        
-        return {
-            'total_info_sets': total_info_sets,
-            'cf_values': cf_values,
-            'hole_cards': flat_hole_cards,
-            'community_cards': flat_community,
-            'pot_sizes': flat_final_pots,
-            'hand_strengths': hand_strengths,
-            'payoffs': flat_payoffs,
-            'player_ids': player_ids,
-            'game_indices': game_indices
-        }
-    
+    @functools.partial(jax.jit, static_argnums=(0,))
+    def _state_to_tensor(self, game_dict):
+        # game_dict: dict con 'hole_cards' (B,6,2), 'final_community' (B,5), 'payoffs' (B,6), 'final_pot' (B)
+        # Devuelve (B, state_size) tensor JAX compatible con OpenSpiel
+        hole = game_dict['hole_cards']          # (B,6,2)
+        comm = game_dict['final_community']     # (B,5)
+        B = hole.shape[0]
+        state_size = 309  # longitud fija OpenSpiel 6-max
+        # Placeholder: TODO lógica real de reconstrucción de estado OpenSpiel
+        return jnp.zeros((B, state_size), dtype=jnp.float32)
+
     def _batch_get_buckets(self, hole_cards: np.ndarray, community_cards: np.ndarray, positions: np.ndarray, pot_sizes: np.ndarray, stack_sizes: np.ndarray, num_actives: np.ndarray) -> np.ndarray:
         """
         Bucketing medio en paralelo usando joblib.Parallel y cache.
@@ -277,61 +240,6 @@ class PokerTrainer:
         )
         return np.array(buckets)
 
-    def _map_info_sets_to_indices(self, game_results: Dict[str, jnp.ndarray]) -> np.ndarray:
-        """
-        🧠 CPU-GPU BRIDGE: Bucketing medio vectorizado y paralelo.
-        """
-        logger.info("🧠 Vectorizando buckets de estrategia en CPU...")
-        data_np = jax.device_get({
-            'hole_cards': game_results['hole_cards'],
-            'final_community': game_results['final_community'],
-            'final_pot': game_results['final_pot'],
-            'payoffs': game_results['payoffs'],
-        })
-        hole_cards_np = data_np['hole_cards'] # (B, 6, 2)
-        community_cards_np = data_np['final_community'] # (B, 5)
-        pot_sizes_np = data_np['final_pot'] # (B,)
-        payoffs_np = data_np['payoffs'] # (B, 6)
-        B, P, _ = hole_cards_np.shape
-        total_info_sets = B * P
-        hole_flat = hole_cards_np.reshape(total_info_sets, 2)
-        comm_flat = np.repeat(community_cards_np[:, np.newaxis, :], P, axis=1).reshape(total_info_sets, 5)
-        pos_flat = np.tile(np.arange(P), B)
-        stack_flat = np.full(total_info_sets, 100.0)
-        pot_flat = np.repeat(pot_sizes_np, P)
-        num_actives = np.sum(hole_cards_np[:, :, 0] != -1, axis=1)
-        num_actives_flat = np.repeat(num_actives, P)
-        valid_mask = (hole_flat[:, 0] != -1)
-        all_buckets = self._batch_get_buckets(
-            hole_flat[valid_mask],
-            comm_flat[valid_mask],
-            pos_flat[valid_mask],
-            pot_flat[valid_mask],
-            stack_flat[valid_mask],
-            num_actives_flat[valid_mask]
-        )
-        unique_buckets, inverse_indices = np.unique(all_buckets, return_inverse=True)
-        indices_map = {bucket: self._get_or_create_index(bucket) for bucket in unique_buckets}
-        final_indices = np.array([indices_map[bucket] for bucket in unique_buckets])[inverse_indices]
-        return final_indices.astype(np.int32)
-    
-    def _vectorized_scatter_update(self, indices: jnp.ndarray, cf_values: jnp.ndarray, n: int) -> None:
-        """
-        🚀 GPU SCATTER UPDATE: Update only necessary Q-values efficiently
-        Now uses PURE JIT function for maximum performance
-        """
-        # Call the PURE JIT-compiled function
-        new_q_values, new_strategies = _static_vectorized_scatter_update(
-            self.q_values,
-            self.strategies,
-            indices[:n],
-            cf_values[:n],
-            self.config.learning_rate,
-            self.config.temperature
-        )
-        self.q_values = new_q_values
-        self.strategies = new_strategies
-    
     def train(self, num_iterations: int, save_path: str, save_interval: int):
         """
         Bucle principal de entrenamiento.
@@ -382,38 +290,25 @@ class PokerTrainer:
         total_info_sets = batch_size * num_players
         logger.info(f"   🚀 DEFINITIVE processing: {batch_size} games × {num_players} players = {total_info_sets} info sets")
 
-        # 1. 🚀 PROCESAMIENTO VECTORIZADO EN GPU
-        vectorized_results = self._vectorized_info_set_processing(game_results)
-        
-        # 2. 🧠 PUENTE GPU -> CPU PARA HASHING
-        indices_cpu = self._map_info_sets_to_indices(game_results)
+        # 1. Simulación (ya está en GPU)
+        # game_results = batch_simulate_real_holdem(...)
 
-        # SI NO HAY ÍNDICES NUEVOS, SALIR TEMPRANO
-        if len(indices_cpu) == 0:
-            logger.warning("No se procesaron nuevos índices en este batch.")
-            return
+        # Calcula num_active una sola vez
+        num_active = jnp.sum(game_results['hole_cards'][:, :, 0] != -1, axis=1)
 
-        # 3. 🚀 PREPARACIÓN PARA LA ACTUALIZACIÓN EN GPU
-        indices_gpu = jax.device_put(indices_cpu, device=self._main_device)
-        cf_values_gpu = jax.device_put(vectorized_results['cf_values'], device=self._main_device)
+        # 2. Convertir a tensores de estado JAX
+        states = jax.vmap(self._state_to_tensor)(game_results)
 
-        # --- PADDING para evitar recompilaciones JIT ---
-        MAX_INDICES = 50_000
-        n = len(indices_gpu)
-        if n > MAX_INDICES:
-            logger.warning(f"El número de índices ({n}) supera MAX_INDICES ({MAX_INDICES}). Recortando a los primeros {MAX_INDICES}.")
-            indices_gpu = indices_gpu[:MAX_INDICES]
-            cf_values_gpu = cf_values_gpu[:MAX_INDICES]
-            n = MAX_INDICES
-        indices_padded = jnp.zeros(MAX_INDICES, dtype=indices_gpu.dtype)
-        indices_padded = indices_padded.at[:n].set(indices_gpu)
-        cf_padded = jnp.zeros((MAX_INDICES, cf_values_gpu.shape[1]), dtype=cf_values_gpu.dtype)
-        cf_padded = cf_padded.at[:n, :].set(cf_values_gpu[:n])
+        # 3. CFR step GPU
+        regrets_gpu = jax.device_put(self.regrets)
+        strategy_gpu = jax.device_put(self.strategies)
+        new_regrets, new_strategy = cfr_step_gpu(states, regrets_gpu, strategy_gpu)
 
-        # 4. 🚀 ACTUALIZACIÓN EN GPU
-        self._vectorized_scatter_update(indices_padded, cf_padded, n)
+        # 4. Actualizar arrays
+        self.regrets = new_regrets
+        self.strategies = new_strategy
         # Update counters
-        self.total_info_sets += len(indices_cpu)
+        self.total_info_sets += 1  # O ajusta según tu lógica
         # Compute metrics
         avg_payoff = jnp.mean(game_results['payoffs'])
         if len(indices_cpu) > 0:

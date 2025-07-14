@@ -6,3 +6,4 @@ phevaluator
 Cython
 numpy
 # JAX se instala por separado para el soporte de CUDA 
+open-spiel[jax]>=1.5 
