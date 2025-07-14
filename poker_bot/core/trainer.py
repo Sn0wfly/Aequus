@@ -244,40 +244,79 @@ class PokerTrainer:
             'game_indices': game_indices
         }
     
+    def _batch_get_buckets(self, hole_cards: np.ndarray, community_cards: np.ndarray, positions: np.ndarray) -> np.ndarray:
+        """
+        Calcula los buckets para un batch completo de manos usando operaciones vectorizadas de NumPy.
+        """
+        dealt_community_counts = np.sum(community_cards != -1, axis=1)
+        round_names = np.full(dealt_community_counts.shape, "River", dtype=object)
+        round_names[dealt_community_counts == 0] = "Preflop"
+        round_names[dealt_community_counts == 3] = "Flop"
+        round_names[dealt_community_counts == 4] = "Turn"
+        hand_categories = np.empty(round_names.shape, dtype=object)
+        preflop_mask = (round_names == "Preflop")
+        if np.any(preflop_mask):
+            preflop_holes = hole_cards[preflop_mask]
+            ranks = np.sort(preflop_holes % 13, axis=1)[:, ::-1]
+            suits = preflop_holes // 13
+            is_pair = (ranks[:, 0] == ranks[:, 1])
+            is_suited = (suits[:, 0] == suits[:, 1])
+            conds = [
+                (is_pair) & (ranks[:, 0] >= 10),
+                (is_pair),
+                (is_suited) & (ranks[:, 0] >= 9),
+                (ranks[:, 0] >= 10) & (ranks[:, 1] >= 10)
+            ]
+            choices = ["PremiumPair", "LowPair", "PremiumSuited", "PremiumBroadway"]
+            hand_categories[preflop_mask] = np.select(conds, choices, default="Other")
+        postflop_mask = ~preflop_mask
+        if np.any(postflop_mask):
+            postflop_holes = hole_cards[postflop_mask]
+            postflop_comm = community_cards[postflop_mask]
+            postflop_strengths = np.array([
+                self.evaluator.evaluate_single(
+                    np.concatenate((h, c[c!=-1])).tolist()
+                ) for h, c in zip(postflop_holes, postflop_comm)
+            ])
+            conds = [
+                postflop_strengths <= 10, postflop_strengths <= 166, postflop_strengths <= 322,
+                postflop_strengths <= 1599, postflop_strengths <= 1609, postflop_strengths <= 2467,
+                postflop_strengths <= 3325, postflop_strengths <= 6185
+            ]
+            choices = [
+                "StraightFlush", "Quads", "FullHouse", "Flush", "Straight",
+                "ThreeOfAKind", "TwoPair", "OnePair"
+            ]
+            hand_categories[postflop_mask] = np.select(conds, choices, default="HighCard")
+        bucket_ids = "R:" + round_names + "_H:" + hand_categories + "_P:" + positions.astype(str)
+        return bucket_ids
+
     def _map_info_sets_to_indices(self, game_results: Dict[str, jnp.ndarray]) -> np.ndarray:
         """
-        🧠 CPU-GPU BRIDGE: Versión final que usa ABSTRACCIÓN (BUCKETING).
+        🧠 CPU-GPU BRIDGE: Versión final que usa BUCKETING VECTORIZADO.
         """
-        logger.info("🧠 Mapeando situaciones de juego a buckets de estrategia...")
+        logger.info("🧠 Vectorizando buckets de estrategia en CPU...")
         data_np = jax.device_get({
             'hole_cards': game_results['hole_cards'],
             'final_community': game_results['final_community'],
-            'final_pot': game_results['final_pot']
         })
-        hole_cards_np = data_np['hole_cards']
-        community_cards_np = data_np['final_community']
-        pot_sizes_np = data_np['final_pot']
-        num_games = pot_sizes_np.shape[0]
-        num_players = 6
-        indices_to_update = []
-        for i in range(num_games * num_players):
-            game_idx = i // num_players
-            player_id = i % num_players
-            hole_cards = hole_cards_np[game_idx, player_id]
-            if hole_cards[0] == -1:
-                continue
-            community_cards = community_cards_np[game_idx]
-            pot_size = pot_sizes_np[game_idx]
-            bucket_id_str = self._get_info_set_bucket(
-                hole_cards=hole_cards,
-                community_cards=community_cards,
-                position=player_id,
-                pot_size=pot_size,
-                stack_size=100.0
-            )
-            index = self._get_or_create_index(bucket_id_str)
-            indices_to_update.append(index)
-        return np.array(indices_to_update, dtype=np.int32)
+        hole_cards_np = data_np['hole_cards'] # (B, 6, 2)
+        community_cards_np = data_np['final_community'] # (B, 5)
+        B, P, _ = hole_cards_np.shape
+        total_info_sets = B * P
+        hole_flat = hole_cards_np.reshape(total_info_sets, 2)
+        comm_flat = np.repeat(community_cards_np[:, np.newaxis, :], P, axis=1).reshape(total_info_sets, 5)
+        pos_flat = np.tile(np.arange(P), B)
+        valid_mask = (hole_flat[:, 0] != -1)
+        all_buckets = self._batch_get_buckets(
+            hole_flat[valid_mask],
+            comm_flat[valid_mask],
+            pos_flat[valid_mask]
+        )
+        unique_buckets, inverse_indices = np.unique(all_buckets, return_inverse=True)
+        indices_map = {bucket: self._get_or_create_index(bucket) for bucket in unique_buckets}
+        final_indices = np.array([indices_map[bucket] for bucket in unique_buckets])[inverse_indices]
+        return final_indices.astype(np.int32)
     
     def _vectorized_scatter_update(self, indices: jnp.ndarray, cf_values: jnp.ndarray) -> None:
         """
