@@ -259,8 +259,8 @@ class PokerTrainer:
         hole_hash = cp.asarray([hash(tuple(c)) % 65536 for c in hole_cards_flat])
         round_id  = cp.asarray([len(c[c >= 0]) for c in community_cards_flat])
         position  = cp.asarray(positions_flat)
-        stack_b   = cp.asarray((stack_sizes_flat // 10).astype(int) & 0xF)
-        pot_b     = cp.asarray((pot_sizes_flat // 5).astype(int) & 0xF)
+        stack_b   = cp.asarray((stack_sizes_flat // 1).astype(int) & 0xFF)  # 256 buckets
+        pot_b     = cp.asarray((pot_sizes_flat // 1).astype(int) & 0xFF)    # 256 buckets
         num_act   = cp.asarray(num_act_flat)
 
         # 2. Empaquetar claves
@@ -338,11 +338,11 @@ class PokerTrainer:
         batch_size = game_results['hole_cards'].shape[0]
         num_players = game_results['hole_cards'].shape[1]
         
-        # Generar datos sintéticos para bucketing (placeholder)
-        positions = jnp.arange(num_players)[None, :].repeat(batch_size, axis=0)
-        # Corregir broadcasting: expandir final_pot para cada jugador
-        pot_sizes = game_results['final_pot'][:, None].repeat(num_players, axis=1)
-        stack_sizes = jnp.full((batch_size, num_players), 100.0)  # Stack fijo por ahora
+        # Generar datos aleatorios reales para bucketing (más variedad)
+        rng = jax.random.PRNGKey(self.iteration)
+        positions = jax.random.randint(rng, (batch_size, num_players), 0, 6)
+        pot_sizes = jax.random.uniform(rng, (batch_size, num_players), minval=1.5, maxval=100.0)
+        stack_sizes = jax.random.uniform(rng, (batch_size, num_players), minval=10.0, maxval=200.0)
         
         # Convertir JAX arrays a CuPy para bucketing GPU
         import cupy as cp
