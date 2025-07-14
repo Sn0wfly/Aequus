@@ -121,6 +121,13 @@ class PokerTrainer:
         
         self.evaluator = HandEvaluator()  # Instancia para bucketing
         
+        # --- GPU hash-table para bucketing persistente ---
+        import cupy as cp
+        self.table_size = 2**26  # 67 M slots
+        self.table_keys = cp.zeros(self.table_size, dtype=cp.uint64)
+        self.table_vals = cp.zeros(self.table_size, dtype=cp.uint32)
+        self.counter = cp.zeros(1, dtype=cp.uint32)
+        
         logger.info("🚀 Definitive Hybrid Trainer initialized")
         logger.info(f"   Batch size: {config.batch_size}")
         logger.info(f"   Max info sets: {config.max_info_sets:,}")
@@ -220,25 +227,36 @@ class PokerTrainer:
         # Placeholder: TODO lógica real de reconstrucción de estado OpenSpiel
         return jnp.zeros((B, state_size), dtype=jnp.float32)
 
-    def _batch_get_buckets(self, hole_cards: np.ndarray, community_cards: np.ndarray, positions: np.ndarray, pot_sizes: np.ndarray, stack_sizes: np.ndarray, num_actives: np.ndarray) -> np.ndarray:
+    def _batch_get_buckets_gpu(self, hole_cards, community_cards,
+                               positions, pot_sizes, stack_sizes,
+                               num_actives):
         """
-        Bucketing medio en paralelo usando joblib.Parallel y cache.
+        GPU-only bucketing + lookup persistente.
+        Devuelve indices_gpu (CuPy array uint32)
         """
-        def to_tuple(arr):
-            return tuple(arr.tolist())
-        n = len(hole_cards)
-        # joblib.Parallel para bucketing masivo
-        buckets = Parallel(n_jobs=-1, backend='threading', batch_size=20000)(
-            delayed(self._get_info_set_bucket)(
-                to_tuple(hole_cards[i]),
-                to_tuple(community_cards[i]),
-                int(positions[i]),
-                float(pot_sizes[i]),
-                float(stack_sizes[i]),
-                int(num_actives[i])
-            ) for i in range(n)
+        import cupy as cp
+        from .bucket_gpu import pack_keys, build_or_get_indices
+        
+        # 1. Convertir a CuPy arrays
+        hole_hash = cp.asarray([hash(tuple(c)) % 65536 for c in hole_cards])
+        round_id  = cp.asarray([len(c[c >= 0]) for c in community_cards])
+        position  = cp.asarray(positions)
+        stack_b   = cp.asarray((stack_sizes // 10).astype(int) & 0xF)
+        pot_b     = cp.asarray((pot_sizes // 5).astype(int) & 0xF)
+        num_act   = cp.asarray(num_actives)
+
+        # 2. Empaquetar claves
+        keys_gpu = pack_keys(hole_hash, round_id, position,
+                             stack_b, pot_b, num_act)
+
+        # 3. Lookup/inserción en tabla persistente
+        indices_gpu = build_or_get_indices(
+            keys_gpu,
+            self.table_keys,
+            self.table_vals,
+            self.counter
         )
-        return np.array(buckets)
+        return indices_gpu
 
     def train(self, num_iterations: int, save_path: str, save_interval: int):
         """
@@ -296,19 +314,34 @@ class PokerTrainer:
         # Calcula num_active una sola vez
         num_active = jnp.sum(game_results['hole_cards'][:, :, 0] != -1, axis=1)
 
-        # 2. Convertir a tensores de estado JAX
+        # 2. GPU Bucketing + Indexado
+        indices_gpu = self._batch_get_buckets_gpu(
+            game_results['hole_cards'],
+            game_results['community_cards'],
+            game_results['positions'],
+            game_results['pot_sizes'],
+            game_results['stack_sizes'],
+            num_active
+        )
+        import cupy as cp
+        indices_cpu = cp.asnumpy(indices_gpu)
+
+        # 3. Convertir a tensores de estado JAX
         states = jax.vmap(self._state_to_tensor)(game_results)
 
-        # 3. CFR step GPU
+        # 4. CFR step GPU
         regrets_gpu = jax.device_put(self.regrets)
         strategy_gpu = jax.device_put(self.strategies)
         new_regrets, new_strategy = cfr_step_gpu(states, regrets_gpu, strategy_gpu)
 
-        # 4. Actualizar arrays
+        # 5. Actualizar arrays
         self.regrets = new_regrets
         self.strategies = new_strategy
+        
         # Update counters
-        self.total_info_sets += 1  # O ajusta según tu lógica
+        self.total_info_sets += total_info_sets
+        self.total_unique_info_sets = int(self.counter[0])  # Actualizar desde GPU counter
+        
         # Compute metrics
         avg_payoff = jnp.mean(game_results['payoffs'])
         if len(indices_cpu) > 0:
@@ -317,11 +350,13 @@ class PokerTrainer:
             avg_entropy = jnp.mean(entropy)
         else:
             avg_entropy = 0.0
+            
         logger.info(f"   Iteración {self.iteration+1} completada.")
         logger.info(f"   📊 Unique info sets: {self.total_unique_info_sets:,}")
         logger.info(f"   📊 Info sets processed: {len(indices_cpu)}")
         logger.info(f"   📊 Growth events: {self.growth_events}")
         logger.info(f"   📊 Array size: {self.config.max_info_sets:,}")
+        
         return {
             'iteration': self.iteration,
             'total_games': self.total_games,
@@ -339,6 +374,7 @@ class PokerTrainer:
     
     def save_model(self, path: str):
         """Save definitive hybrid model"""
+        import cupy as cp
         model_data = {
             'q_values': np.array(self.q_values),
             'strategies': np.array(self.strategies),
@@ -349,7 +385,10 @@ class PokerTrainer:
             'total_info_sets': self.total_info_sets,
             'unique_info_sets': self.total_unique_info_sets,
             'growth_events': self.growth_events,
-            'config': self.config
+            'config': self.config,
+            'gpu_keys': cp.asnumpy(self.table_keys),
+            'gpu_vals': cp.asnumpy(self.table_vals),
+            'gpu_counter': int(self.counter[0])
         }
         
         with open(path, 'wb') as f:
@@ -365,6 +404,7 @@ class PokerTrainer:
     
     def load_model(self, path: str):
         """Load definitive hybrid model"""
+        import cupy as cp
         with open(path, 'rb') as f:
             model_data = pickle.load(f)
         
@@ -378,6 +418,13 @@ class PokerTrainer:
         self.total_unique_info_sets = model_data['unique_info_sets']
         self.growth_events = model_data['growth_events']
         self.next_index = len(self.info_set_data)
+        
+        # Cargar tabla hash GPU si existe
+        if 'gpu_keys' in model_data:
+            self.table_keys = cp.array(model_data['gpu_keys'])
+            self.table_vals = cp.array(model_data['gpu_vals'])
+            self.counter = cp.array([model_data['gpu_counter']], dtype=cp.uint32)
+            logger.info(f"   GPU hash table loaded: {model_data['gpu_counter']:,} unique keys")
         
         logger.info(f"📂 Definitive Hybrid model loaded: {path}")
         logger.info(f"   Q-values shape: {self.q_values.shape}")
