@@ -9,6 +9,7 @@ a máxima velocidad en la GPU usando JAX.
 
 import jax
 import jax.numpy as jnp
+import jax.lax as lax
 
 # ============================================================================
 # FUNCIONES DE EVALUACIÓN DE MANOS (BAJO NIVEL)
@@ -82,8 +83,13 @@ def _simulate_single_game_vectorized(rng_key: jnp.ndarray, game_config: dict) ->
     # --- Reparto ---
     rng_key, deck_key = jax.random.split(rng_key)
     deck = jax.random.permutation(deck_key, jnp.arange(52))
-    hole_cards = deck[:players*2].reshape((players, 2))
-    community_cards_full = deck[players*2 : players*2 + 5]
+    
+    num_hole_cards = players * 2
+    hole_cards = lax.dynamic_slice(deck, (0,), (num_hole_cards,))
+    hole_cards = hole_cards.reshape((players, 2))
+    
+    community_start_index = num_hole_cards
+    community_cards_full = lax.dynamic_slice(deck, (community_start_index,), (5,))
     
     # --- Rondas de Apuestas (simplificado para JIT) ---
     # Esto es una abstracción. Un motor de juego real tendría un bucle complejo.
