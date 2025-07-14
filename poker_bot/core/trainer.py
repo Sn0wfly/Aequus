@@ -300,53 +300,79 @@ class PokerTrainer:
         self.q_values = new_q_values
         self.strategies = new_strategies
     
-    def train_step(self, rng_key: jax.random.PRNGKey, 
-                   game_results: Dict[str, jnp.ndarray]) -> Dict[str, Any]:
+    def train(self, num_iterations: int, save_path: str, save_interval: int):
         """
-        🚀 DEFINITIVE HYBRID training step
-        Optimal GPU-CPU bridge for maximum performance
+        Bucle principal de entrenamiento.
         """
-        self.iteration += 1
-        self.total_games += self.config.batch_size
+        logger.info(f"🚀 Iniciando bucle de entrenamiento por {num_iterations} iteraciones...")
+        start_time = time.time()
         
+        initial_iteration = self.iteration
+        for i in range(initial_iteration, initial_iteration + num_iterations):
+            self.iteration = i
+            
+            # Generar claves para el batch
+            rng_key = jax.random.PRNGKey(i)
+            rng_keys = jax.random.split(rng_key, self.config.batch_size)
+            
+            # Configuración del juego (puede ser más dinámica en el futuro)
+            game_config = {
+                'players': 6,
+                'starting_stack': 100.0,
+                'small_blind': 1.0,
+                'big_blind': 2.0
+            }
+            
+            # Simulación en GPU
+            from .simulation import batch_simulate_real_holdem
+            game_results = batch_simulate_real_holdem(rng_keys, game_config)
+            
+            # Paso de entrenamiento (CPU + GPU)
+            self.train_step(game_results)
+
+            # Guardar checkpoint
+            if (self.iteration + 1) % save_interval == 0:
+                logger.info(f"\n💾 Guardando checkpoint en la iteración {self.iteration + 1}...")
+                self.save_model(save_path)
+
+        # Guardado final
+        self.save_model(save_path)
+        total_time = time.time() - start_time
+        logger.info(f"🎉 Entrenamiento finalizado en {total_time:.2f} segundos.")
+
+    def train_step(self, game_results: dict):
+        """
+        Paso de entrenamiento simplificado, sin rng_key.
+        """
+        self.total_games += self.config.batch_size
         batch_size = game_results['payoffs'].shape[0]
         num_players = game_results['payoffs'].shape[1]
         total_info_sets = batch_size * num_players
-        
         logger.info(f"   🚀 DEFINITIVE processing: {batch_size} games × {num_players} players = {total_info_sets} info sets")
-        
         # 1. 🚀 VECTORIZED GPU processing
         vectorized_results = self._vectorized_info_set_processing(game_results)
         cf_values = vectorized_results['cf_values']
-        
         # 2. 🧠 CPU-GPU BRIDGE: Map info sets to indices
         indices = self._map_info_sets_to_indices(game_results)
-        
         # 3. 🚀 GPU SCATTER UPDATE: Update only necessary values
         if len(indices) > 0:
             self._vectorized_scatter_update(indices, cf_values[:len(indices)])
-        
         # Update counters
         self.total_info_sets += len(indices)
-        
         # Compute metrics
         avg_payoff = jnp.mean(game_results['payoffs'])
-        
         # Calculate strategy entropy
         if len(indices) > 0:
-            # Get strategies for the updated indices
             strategies_subset = self.strategies[indices]
             entropy = -jnp.sum(strategies_subset * jnp.log(strategies_subset + 1e-8), axis=1)
             avg_entropy = jnp.mean(entropy)
         else:
             avg_entropy = 0.0
-        
-        logger.info(f"   ✅ DEFINITIVE processing completed!")
+        logger.info(f"   Iteración {self.iteration+1} completada.")
         logger.info(f"   📊 Unique info sets: {self.total_unique_info_sets:,}")
         logger.info(f"   📊 Info sets processed: {len(indices)}")
         logger.info(f"   📊 Growth events: {self.growth_events}")
         logger.info(f"   📊 Array size: {self.config.max_info_sets:,}")
-        
         return {
             'iteration': self.iteration,
             'total_games': self.total_games,
@@ -443,7 +469,7 @@ def benchmark_definitive_hybrid_performance():
     
     start_time = time.time()
     game_results = batch_simulate_real_holdem(rng_keys, game_config)
-    warmup_results = trainer.train_step(rng_key, game_results)
+    warmup_results = trainer.train_step(game_results)
     warmup_time = time.time() - start_time
     
     logger.info(f"   ✅ Warm-up completed in {warmup_time:.2f}s")
@@ -460,7 +486,7 @@ def benchmark_definitive_hybrid_performance():
         
         start_time = time.time()
         game_results = batch_simulate_real_holdem(rng_keys, game_config)
-        results = trainer.train_step(rng_key, game_results)
+        results = trainer.train_step(game_results)
         iteration_time = time.time() - start_time
         
         total_time += iteration_time
