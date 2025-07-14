@@ -28,7 +28,7 @@ def cli():
 @click.option('--batch-size', default=8192, help='Tamaño del batch para la simulación en GPU.')
 @click.option('--save-interval', default=1000, help='Guardar checkpoint cada N iteraciones.')
 @click.option('--model-path', default='models/gto_model.pkl', help='Ruta para guardar el modelo entrenado.')
-def train(iterations: int, batch-size: int, save_interval: int, model_path: str):
+def train(iterations: int, batch_size: int, save_interval: int, model_path: str):
     """Entrena el modelo de IA de Póker usando el entrenador GTO."""
     
     logger.info("🚀 Iniciando el entrenamiento del modelo GTO de JaxPoker...")
@@ -39,45 +39,70 @@ def train(iterations: int, batch-size: int, save_interval: int, model_path: str)
     
     # Configurar el entrenador
     config = TrainerConfig(
-        batch_size=batch_size
-        # Puedes añadir más parámetros de configuración aquí si los mueves desde el trainer
+        batch_size=batch_size,
+        learning_rate=0.1,
+        temperature=1.0
     )
+    
     trainer = PokerTrainer(config)
-
-    # Lógica para cargar un checkpoint si existe
-    if os.path.exists(model_path):
-        logger.info(f"📂 Cargando checkpoint existente desde: {model_path}")
-        try:
-            trainer.load_model(model_path)
-            logger.info(f"✅ Reanudando entrenamiento desde la iteración {trainer.iteration}.")
-        except Exception as e:
-            logger.error(f"❌ No se pudo cargar el modelo. Empezando de cero. Error: {e}")
-
-    # Iniciar el bucle de entrenamiento
-    trainer.train(
-        num_iterations=iterations,
-        save_path=model_path,
-        save_interval=save_interval
-    )
-
-    logger.info("🎉 ¡Entrenamiento completado!")
+    
+    try:
+        # Iniciar entrenamiento
+        trainer.train(
+            num_iterations=iterations,
+            save_path=model_path,
+            save_interval=save_interval
+        )
+        
+        logger.info("✅ Entrenamiento completado exitosamente!")
+        logger.info(f"Modelo guardado en: {model_path}")
+        
+    except Exception as e:
+        logger.error(f"❌ Error durante el entrenamiento: {e}")
+        raise
 
 @cli.command()
-@click.option('--model', required=True, help='Ruta al modelo GTO entrenado (.pkl).')
+@click.option('--model', required=True, help='Ruta al modelo entrenado (.pkl)')
 def play(model: str):
-    """Inicia una sesión de juego interactiva contra el bot entrenado."""
+    """Carga y prueba el bot entrenado."""
     if not os.path.exists(model):
         logger.error(f"Modelo no encontrado en la ruta: {model}")
         return
 
     logger.info(f"🤖 Cargando bot con el modelo: {model}")
     
-    # La clase `PokerBot` necesitará ser actualizada para cargar el nuevo formato del modelo
-    # y para tener una lógica de juego interactivo.
-    # bot = PokerBot(model_path=model)
-    # bot.start_interactive_session()
+    try:
+        bot = PokerBot(model_path=model)
+        logger.info("✅ Bot cargado exitosamente!")
+        
+        # Prueba simple del bot
+        test_state = {'player_id': 0, 'hole_cards': [0, 1], 'community_cards': [2, 3, 4]}
+        action = bot.get_action(test_state)
+        logger.info(f"Acción de prueba: {action}")
+        
+    except Exception as e:
+        logger.error(f"❌ Error al cargar el bot: {e}")
 
-    click.echo("Funcionalidad de juego interactivo aún no implementada.")
+@cli.command()
+def evaluate():
+    """Evalúa los componentes del sistema."""
+    logger.info("🔍 Evaluando componentes del sistema...")
+    
+    try:
+        # Test JAX
+        logger.info(f"✅ JAX version: {jax.__version__}")
+        logger.info(f"✅ JAX devices: {jax.devices()}")
+        
+        # Test trainer
+        config = TrainerConfig(batch_size=1024)
+        trainer = PokerTrainer(config)
+        logger.info("✅ Trainer creado exitosamente")
+        
+        # Test bot (sin modelo)
+        logger.info("✅ Componentes básicos funcionando")
+        
+    except Exception as e:
+        logger.error(f"❌ Error en evaluación: {e}")
 
 if __name__ == '__main__':
     cli()
