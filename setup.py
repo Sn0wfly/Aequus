@@ -15,9 +15,22 @@ def get_extensions():
 
 setup(
     name="aequus-poker-bot",
-    version="1.0.0",
+    version="1.0.1", # Incrementamos la versión para forzar la actualización
     packages=find_packages(),
+    
+    # Añadimos esto para asegurar que el .pyx se incluya
+    package_data={
+        'poker_bot.core': ['*.pyx'],
+    },
+    
+    setup_requires=[
+        'setuptools>=64',
+        'cython>=3.0.0',
+        'numpy>=1.21.0'
+    ],
+    
     ext_modules=get_extensions(),
+
     install_requires=[
         'jax[cuda12_pip]',
         'numpy',
@@ -26,8 +39,9 @@ setup(
         'tqdm',
         'psutil',
         'phevaluator',
-        'Cython', # Aún es bueno tenerlo aquí para algunos casos
+        'Cython',
     ],
+    
     entry_points={
         'console_scripts': [
             'aequus=poker_bot.cli:cli',
