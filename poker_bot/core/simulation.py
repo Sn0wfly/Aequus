@@ -108,7 +108,8 @@ def _simulate_single_game_vectorized(rng_key: jnp.ndarray, game_config: dict) ->
         return _evaluate_hand_strength(player_cards)
 
     # Evalúa las manos de todos los jugadores
-    hand_strengths = jax.vmap(evaluate_player_hand)(jnp.arange(players))
+    hand_strengths = jax.vmap(evaluate_player_hand)(jnp.arange(MAX_PLAYERS))
+    # Solo usar hand_strengths[:players] en la lógica posterior
     
     # Determina el ganador
     winner_idx = jnp.argmax(hand_strengths)
