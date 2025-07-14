@@ -235,8 +235,8 @@ class PokerTrainer:
         Devuelve indices_gpu (CuPy array uint32)
         """
         import cupy as cp
-        from .bucket_gpu import pack_keys, build_or_get_indices
         import numpy as np
+        from .bucket_gpu import pack_keys, build_or_get_indices
         # Aplanar todos los arrays a (batch_size * num_players, ...)
         B, N = hole_cards.shape[:2]
         hole_cards_flat = hole_cards.reshape(-1, hole_cards.shape[-1])
