@@ -318,7 +318,7 @@ class PokerTrainer:
         final_indices = np.array([indices_map[bucket] for bucket in unique_buckets])[inverse_indices]
         return final_indices.astype(np.int32)
     
-    def _vectorized_scatter_update(self, indices: jnp.ndarray, cf_values: jnp.ndarray) -> None:
+    def _vectorized_scatter_update(self, indices: jnp.ndarray, cf_values: jnp.ndarray, n: int) -> None:
         """
         🚀 GPU SCATTER UPDATE: Update only necessary Q-values efficiently
         Now uses PURE JIT function for maximum performance
@@ -327,13 +327,11 @@ class PokerTrainer:
         new_q_values, new_strategies = _static_vectorized_scatter_update(
             self.q_values,
             self.strategies,
-            indices,
-            cf_values,
+            indices[:n],
+            cf_values[:n],
             self.config.learning_rate,
             self.config.temperature
         )
-        
-        # Update arrays (JAX will handle the shape changes automatically)
         self.q_values = new_q_values
         self.strategies = new_strategies
     
@@ -399,17 +397,28 @@ class PokerTrainer:
             return
 
         # 3. 🚀 PREPARACIÓN PARA LA ACTUALIZACIÓN EN GPU
-        # Mueve los arrays que vienen del CPU a la GPU
         indices_gpu = jax.device_put(indices_cpu, device=self._main_device)
         cf_values_gpu = jax.device_put(vectorized_results['cf_values'], device=self._main_device)
 
+        # --- PADDING para evitar recompilaciones JIT ---
+        MAX_INDICES = 50000
+        n = len(indices_gpu)
+        if n > MAX_INDICES:
+            logger.warning(f"El número de índices ({n}) supera MAX_INDICES ({MAX_INDICES}). Recortando a los primeros {MAX_INDICES}.")
+            indices_gpu = indices_gpu[:MAX_INDICES]
+            cf_values_gpu = cf_values_gpu[:MAX_INDICES]
+            n = MAX_INDICES
+        indices_padded = jnp.zeros(MAX_INDICES, dtype=indices_gpu.dtype)
+        indices_padded = indices_padded.at[:n].set(indices_gpu)
+        cf_padded = jnp.zeros((MAX_INDICES, cf_values_gpu.shape[1]), dtype=cf_values_gpu.dtype)
+        cf_padded = cf_padded.at[:n, :].set(cf_values_gpu[:n])
+
         # 4. 🚀 ACTUALIZACIÓN EN GPU
-        self._vectorized_scatter_update(indices_gpu, cf_values_gpu[:len(indices_gpu)])
+        self._vectorized_scatter_update(indices_padded, cf_padded, n)
         # Update counters
         self.total_info_sets += len(indices_cpu)
         # Compute metrics
         avg_payoff = jnp.mean(game_results['payoffs'])
-        # Calculate strategy entropy
         if len(indices_cpu) > 0:
             strategies_subset = self.strategies[indices_cpu]
             entropy = -jnp.sum(strategies_subset * jnp.log(strategies_subset + 1e-8), axis=1)
