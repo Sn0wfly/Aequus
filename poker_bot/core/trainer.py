@@ -367,27 +367,28 @@ class PokerTrainer:
         # 3. Convertir a tensores de estado JAX
         states = jax.vmap(self._state_to_tensor)(game_results)
 
-        # 4. CFR step GPU
-        regrets_gpu = jax.device_put(self.regrets)
-        strategy_gpu = jax.device_put(self.strategies)
-        
-        # Generate dummy cf_values
-        cf_values = make_dummy_cf_values(batch_size, num_players, self.config.num_actions)
-        cf_values_gpu = jax.device_put(cf_values)
-
-        # Apply scatter update
-        new_regrets, new_strategy = _static_vectorized_scatter_update(
-            regrets_gpu, strategy_gpu, indices_cpu, cf_values_gpu,
-            self.config.learning_rate, self.config.temperature
+        # 4. Generar cf_values dummy (normal random para probar)
+        rng_cf = jax.random.PRNGKey(self.iteration)
+        cf_values = jax.random.normal(
+            rng_cf,
+            (indices_gpu.shape[0], self.config.num_actions),
+            dtype=self.config.dtype
         )
 
-        # 5. Actualizar arrays
-        self.regrets = new_regrets
-        self.strategies = new_strategy
-        
-        # Update counters
-        self.total_info_sets += total_info_sets
-        self.total_unique_info_sets = int(self.counter[0])  # Actualizar desde GPU counter
+        # 5. Actualizar q_values y strategies con scatter GPU-JAX
+        new_q, new_strat = _static_vectorized_scatter_update(
+            self.q_values,
+            self.strategies,
+            jnp.asarray(indices_gpu),  # mover a JAX
+            cf_values,
+            self.config.learning_rate,
+            self.config.temperature
+        )
+        self.q_values = new_q
+        self.strategies = new_strat
+
+        # 6. Sincronizar contador con GPU
+        self.total_unique_info_sets = int(self.counter[0])
         
         # Compute metrics
         avg_payoff = jnp.mean(game_results['payoffs'])
