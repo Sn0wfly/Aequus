@@ -11,9 +11,9 @@ void rollout_kernel(
     float* __restrict__ cf_values,
     const unsigned long long seed,
     const int batch_size,
-    const int num_actions,
     const int N_rollouts
 ) {
+    const int num_actions = 4;  // fold, call, bet, raise
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int batch_idx = idx / (num_actions * N_rollouts);
     int action_idx = (idx % (num_actions * N_rollouts)) / N_rollouts;
@@ -63,9 +63,9 @@ extern "C" __global__
 void normalize_rollouts_kernel(
     float* cf_values,
     const int batch_size,
-    const int num_actions,
     const int N_rollouts
 ) {
+    const int num_actions = 4;  // fold, call, bet, raise
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int batch_idx = idx / num_actions;
     int action_idx = idx % num_actions;
@@ -83,27 +83,19 @@ ROLLOUT_MODULE = cp.RawModule(code=ROLLOUT_KERNEL)
 rollout_kernel = ROLLOUT_MODULE.get_function("rollout_kernel")
 normalize_kernel = ROLLOUT_MODULE.get_function("normalize_rollouts_kernel")
 
-def mccfr_rollout_gpu(
-    keys_gpu: cp.ndarray,
-    table_keys: cp.ndarray,
-    table_vals: cp.ndarray,
-    counter: cp.ndarray,
-    N_rollouts: int = 100
-) -> cp.ndarray:
+def mccfr_rollout_gpu(keys_gpu: cp.ndarray, N_rollouts: int = 100) -> cp.ndarray:
     """
     Monte-Carlo CFR rollout on GPU.
     
     Args:
-        keys_gpu: (B, num_actions) uint64 keys for each action
-        table_keys: GPU hash table keys (persistent)
-        table_vals: GPU hash table values (persistent)
-        counter: GPU counter for unique keys (persistent)
+        keys_gpu: (B,) uint64 keys (1-D array)
         N_rollouts: Number of rollouts per action (default: 100)
     
     Returns:
-        cf_values: (B, num_actions) counterfactual values as float32 ready for scatter_update
+        cf_values: (B, 4) counterfactual values as float32 ready for scatter_update
     """
-    batch_size, num_actions = keys_gpu.shape
+    batch_size = keys_gpu.size
+    num_actions = 4  # fold, call, bet, raise
     
     # Allocate output array
     cf_values = cp.zeros((batch_size, num_actions), dtype=cp.float32)
@@ -122,7 +114,6 @@ def mccfr_rollout_gpu(
             cf_values,
             cp.uint64(int(time.time() * 1000)),  # Seed
             batch_size,
-            num_actions,
             N_rollouts
         )
     )
@@ -135,7 +126,7 @@ def mccfr_rollout_gpu(
     normalize_kernel(
         (normalize_blocks,),
         (256,),
-        (cf_values, batch_size, num_actions, N_rollouts)
+        (cf_values, batch_size, N_rollouts)
     )
     
     # Synchronize again
