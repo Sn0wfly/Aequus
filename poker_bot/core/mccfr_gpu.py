@@ -5,7 +5,6 @@ import time
 
 # CUDA kernel for Monte-Carlo CFR rollouts
 ROLLOUT_KERNEL = """
-#include <cstdint>
 extern "C" __global__
 void rollout_kernel(
     const unsigned long long* __restrict__ keys,
