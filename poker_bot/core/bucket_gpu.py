@@ -97,8 +97,8 @@ def benchmark():
         rng.integers(0, 16, N, cp.uint8),
         rng.integers(2, 7, N, cp.uint8)
     )
-    t = benchmark(build_or_get_indices, (keys,), n_repeat=3)
-    print(f"GPU throughput: {N/t.mean*1e-6:.1f} M keys/sec")
+    t = benchmark(build_or_get_indices, (keys,), times=3)
+    print(f"GPU throughput: {N/t.mean()*1e-6:.1f} M keys/sec")
 
 if __name__ == '__main__':
     benchmark() 
