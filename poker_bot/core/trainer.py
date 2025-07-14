@@ -238,11 +238,6 @@ class PokerTrainer:
         import numpy as np
         from .bucket_gpu import pack_keys, build_or_get_indices
         
-        # Debug: verificar qué función se importó
-        print(f"DEBUG: build_or_get_indices signature: {build_or_get_indices.__code__.co_argcount} args")
-        print(f"DEBUG: build_or_get_indices name: {build_or_get_indices.__name__}")
-        print(f"DEBUG: build_or_get_indices module: {build_or_get_indices.__module__}")
-        
         # Aplanar todos los arrays a (batch_size * num_players, ...)
         B, N = hole_cards.shape[:2]
         hole_cards_flat = hole_cards.reshape(-1, hole_cards.shape[-1])
