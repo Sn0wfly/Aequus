@@ -1,20 +1,16 @@
 """
 GPU-only bucketing + hash-table for Poker CFR
-Requires: cupy-cuda12x (or your CUDA version)
+Requires: cupy-cuda12x
 """
 
 import cupy as cp
-import time
+from cupyx.profiler import benchmark
 
 # -----------------------------
-# 1. Empaquetado de claves
+# 1. Empaquetado uint64
 # -----------------------------
 def pack_keys(hole_hash, round_id, position,
               stack_bucket, pot_bucket, num_active):
-    """
-    Todos los inputs son CuPy arrays del mismo shape
-    Devuelve CuPy array uint64
-    """
     return (
         (hole_hash.astype(cp.uint64) << 24) |
         (round_id.astype(cp.uint64) << 16) |
@@ -25,70 +21,64 @@ def pack_keys(hole_hash, round_id, position,
     )
 
 # -----------------------------
-# 2. Hash-table optimizada en GPU
+# 2. Kernel CUDA con máscara
 # -----------------------------
-_HASH_KERNEL = r'''
+_KERNEL = r'''
 extern "C" __global__
-void build_or_get_indices(
+void bucket_kernel(
     const unsigned long long* __restrict__ keys,
-    unsigned int* __restrict__ indices,
+    unsigned int* __restrict__ out_idx,
     unsigned long long* __restrict__ table_keys,
     unsigned int* __restrict__ table_vals,
     const unsigned int N,
-    const unsigned int table_size)
+    const unsigned int mask)
 {
-    const unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= N) return;
 
     unsigned long long key = keys[tid];
-    // OPTIMIZACIÓN 1: Bitwise AND en vez de módulo (más rápido)
-    unsigned int slot = (unsigned int)(key & (table_size - 1));
+    unsigned int slot = (unsigned int)(key & mask);
 
     while (true) {
         unsigned long long old = atomicCAS(&table_keys[slot], 0ULL, key);
-        if (old == 0ULL || old == key) {
-            // key inserted or found
-            if (old == 0ULL) {
-                // new key: claim next index
-                unsigned int idx = atomicAdd(&table_vals[slot], 1u);
-                indices[tid] = idx;
-            } else {
-                // existing key: read index
-                indices[tid] = table_vals[slot];
-            }
+        if (old == 0ULL) {
+            // nueva key: asignar índice
+            unsigned int idx = atomicAdd(&table_vals[0], 1u);
+            table_vals[slot] = idx;
+            out_idx[tid] = idx;
             break;
         }
-        // OPTIMIZACIÓN 2: Linear probing más eficiente
-        slot = (slot + 1) & (table_size - 1);
+        if (old == key) {
+            // key existente
+            out_idx[tid] = table_vals[slot];
+            break;
+        }
+        slot = (slot + 1) & mask;
     }
 }
 '''
 
-# Compilar kernel una sola vez
-_build_or_get_indices_kernel = cp.RawKernel(_HASH_KERNEL, 'build_or_get_indices')
+_bucket_kernel = cp.RawKernel(_KERNEL, 'bucket_kernel')
 
 # -----------------------------
-# 3. Wrapper Python optimizado
+# 3. Wrapper
 # -----------------------------
-def build_or_get_indices(keys_gpu, table_size=2**24):  # OPTIMIZACIÓN 3: Tabla más grande
-    """
-    keys_gpu: CuPy array uint64
-    Devuelve: indices_gpu CuPy array uint32
-    """
+def build_or_get_indices(keys_gpu, table_size=2**24):
     N = keys_gpu.size
     indices_gpu = cp.empty(N, dtype=cp.uint32)
 
-    # Tablas device
-    table_keys = cp.zeros(table_size, dtype=cp.uint64)  # 0 == empty
-    table_vals = cp.zeros(table_size, dtype=cp.uint32)  # índice
+    # table_size debe ser potencia de 2
+    table_keys = cp.zeros(table_size, dtype=cp.uint64)
+    table_vals = cp.zeros(table_size, dtype=cp.uint32)
+    counter = cp.zeros(1, dtype=cp.uint32)  # índices contiguos
 
-    # OPTIMIZACIÓN 4: Más threads por bloque para mejor occupancy
-    threads = 512  # Aumentado de 256 a 512
+    threads = 256
     blocks = (N + threads - 1) // threads
-    _build_or_get_indices_kernel(
+    _bucket_kernel(
         (blocks,), (threads,),
-        (keys_gpu, indices_gpu, table_keys, table_vals,
-         cp.uint32(N), cp.uint32(table_size))
+        (keys_gpu, indices_gpu,
+         table_keys, table_vals,
+         cp.uint32(N), cp.uint32(table_size - 1))
     )
     cp.cuda.Device().synchronize()
     return indices_gpu
@@ -98,26 +88,17 @@ def build_or_get_indices(keys_gpu, table_size=2**24):  # OPTIMIZACIÓN 3: Tabla 
 # -----------------------------
 def benchmark():
     N = 1_000_000
-    print(f"Benchmarking {N:,} keys …")
-
-    # Datos sintéticos
     rng = cp.random.default_rng(42)
     keys = pack_keys(
-        hole_hash   = rng.integers(0, 1326,  N, dtype=cp.uint16),  # 52 choose 2
-        round_id    = rng.integers(0, 6,     N, dtype=cp.uint8),   # 0,3,4,5
-        position    = rng.integers(0, 6,     N, dtype=cp.uint8),
-        stack_bucket= rng.integers(0, 16,    N, dtype=cp.uint8),
-        pot_bucket  = rng.integers(0, 16,    N, dtype=cp.uint8),
-        num_active  = rng.integers(2, 7,     N, dtype=cp.uint8)
+        rng.integers(0, 1326, N, cp.uint16),
+        rng.integers(0, 6, N, cp.uint8),
+        rng.integers(0, 6, N, cp.uint8),
+        rng.integers(0, 16, N, cp.uint8),
+        rng.integers(0, 16, N, cp.uint8),
+        rng.integers(2, 7, N, cp.uint8)
     )
-
-    cp.cuda.Device().synchronize()
-    t0 = time.perf_counter()
-    indices = build_or_get_indices(keys)
-    cp.cuda.Device().synchronize()
-    t1 = time.perf_counter()
-    elapsed = t1 - t0
-    print(f"GPU throughput: {N/elapsed*1e-6:.1f} M keys/sec (tiempo: {elapsed:.4f} s)")
+    t = benchmark(build_or_get_indices, (keys,), n_repeat=3)
+    print(f"GPU throughput: {N/t.mean*1e-6:.1f} M keys/sec")
 
 if __name__ == '__main__':
     benchmark() 
