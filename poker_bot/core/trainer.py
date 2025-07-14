@@ -25,6 +25,7 @@ from functools import lru_cache
 from joblib import Parallel, delayed
 import pyspiel
 from poker_bot.core.cfr_gpu import cfr_step_gpu
+from poker_bot.core.mccfr_gpu import mccfr_rollout_gpu
 import functools
 
 logger = logging.getLogger(__name__)
@@ -367,13 +368,16 @@ class PokerTrainer:
         # 3. Convertir a tensores de estado JAX
         states = jax.vmap(self._state_to_tensor)(game_results)
 
-        # 4. Generar cf_values dummy (normal random para probar)
-        rng_cf = jax.random.PRNGKey(self.iteration)
-        cf_values = jax.random.normal(
-            rng_cf,
-            (indices_gpu.shape[0], self.config.num_actions),
-            dtype=self.config.dtype
+        # 4. Generar cf_values con MCCFR GPU (Monte-Carlo CFR vectorizado)
+        keys_gpu = cp.asarray(indices_gpu, dtype=cp.uint64)
+        cf_values_gpu = mccfr_rollout_gpu(
+            keys_gpu, 
+            self.table_keys, 
+            self.table_vals, 
+            self.counter, 
+            N_rollouts=100
         )
+        cf_values = cp.asnumpy(cf_values_gpu).astype(self.config.dtype)
 
         # 5. Actualizar q_values y strategies con scatter GPU-JAX
         new_q, new_strat = _static_vectorized_scatter_update(
