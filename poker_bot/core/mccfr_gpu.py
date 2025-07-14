@@ -40,16 +40,16 @@ void rollout_kernel(
         // Update state for next iteration
         state = state * 1103515245ULL + 12345ULL;
         
-        // Simple payoff calculation
+        // Simple payoff calculation (normalized to reasonable range)
         if (action == 0) {  // fold
-            payoff = -pot_size * 0.5f;
+            payoff = -0.5f;  // Small loss
             break;
         } else if (action == 1) {  // call
-            payoff = (state % 200 - 100) * 0.1f;  // Random outcome
+            payoff = (float)(state % 200 - 100) / 100.0f;  // -1.0 to 1.0
         } else if (action == 2) {  // bet
-            payoff = (state % 300 - 150) * 0.15f;
+            payoff = (float)(state % 300 - 150) / 150.0f;  // -1.0 to 1.0
         } else {  // raise
-            payoff = (state % 400 - 200) * 0.2f;
+            payoff = (float)(state % 400 - 200) / 200.0f;  // -1.0 to 1.0
         }
     }
     
@@ -127,6 +127,9 @@ def mccfr_rollout_gpu(
         )
     )
     
+    # Synchronize to ensure kernel completes
+    cp.cuda.Stream.null.synchronize()
+    
     # Normalize results
     normalize_blocks = (batch_size * num_actions + 255) // 256
     normalize_kernel(
@@ -134,6 +137,9 @@ def mccfr_rollout_gpu(
         (256,),
         (cf_values, batch_size, num_actions, N_rollouts)
     )
+    
+    # Synchronize again
+    cp.cuda.Stream.null.synchronize()
     
     return cf_values
 
