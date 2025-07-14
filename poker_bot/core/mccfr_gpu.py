@@ -5,13 +5,15 @@ import time
 
 # CUDA kernel for Monte-Carlo CFR rollouts
 ROLLOUT_KERNEL = """
-extern "C" __global__ void rollout_kernel(
-    const uint64_t* keys,
-    uint64_t* cf_values,
+#include <cstdint>
+extern "C" __global__
+void rollout_kernel(
+    const unsigned long long* __restrict__ keys,
+    float* __restrict__ cf_values,
+    const unsigned long long seed,
     const int batch_size,
     const int num_actions,
-    const int N_rollouts,
-    const uint64_t seed
+    const int N_rollouts
 ) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int batch_idx = idx / (num_actions * N_rollouts);
@@ -21,7 +23,7 @@ extern "C" __global__ void rollout_kernel(
     if (batch_idx >= batch_size) return;
     
     // Initialize random state
-    uint64_t state = keys[batch_idx * num_actions + action_idx] + seed + rollout_idx;
+    unsigned long long state = keys[batch_idx * num_actions + action_idx] + seed + rollout_idx;
     
     // Simple poker simulation parameters
     const int stack_size = 10000;  // 100 BB
@@ -54,12 +56,13 @@ extern "C" __global__ void rollout_kernel(
     
     // Store result
     if (rollout_idx < N_rollouts) {
-        atomicAdd(&cf_values[batch_idx * num_actions + action_idx], (uint64_t)(payoff * 1000));
+        atomicAdd(&cf_values[batch_idx * num_actions + action_idx], payoff);
     }
 }
 
-extern "C" __global__ void normalize_rollouts_kernel(
-    uint64_t* cf_values,
+extern "C" __global__
+void normalize_rollouts_kernel(
+    float* cf_values,
     const int batch_size,
     const int num_actions,
     const int N_rollouts
@@ -99,12 +102,12 @@ def mccfr_rollout_gpu(
         N_rollouts: Number of rollouts per action (default: 100)
     
     Returns:
-        cf_values: (B, num_actions) counterfactual values ready for scatter_update
+        cf_values: (B, num_actions) counterfactual values as float32 ready for scatter_update
     """
     batch_size, num_actions = keys_gpu.shape
     
     # Allocate output array
-    cf_values = cp.zeros((batch_size, num_actions), dtype=cp.uint64)
+    cf_values = cp.zeros((batch_size, num_actions), dtype=cp.float32)
     
     # Calculate grid and block dimensions
     total_threads = batch_size * num_actions * N_rollouts
@@ -118,10 +121,10 @@ def mccfr_rollout_gpu(
         (
             keys_gpu,
             cf_values,
+            cp.uint64(int(time.time() * 1000)),  # Seed
             batch_size,
             num_actions,
-            N_rollouts,
-            cp.uint64(int(time.time() * 1000))  # Seed
+            N_rollouts
         )
     )
     
