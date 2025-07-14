@@ -22,6 +22,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass
 from functools import partial
 import time
+from poker_bot.evaluator import HandEvaluator
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +118,7 @@ class PokerTrainer:
         self.total_info_sets = 0
         self.total_unique_info_sets = 0
         self.growth_events = 0
+        self._main_device = None
 
         # --- SOLUCIÓN TAREA 1: Guardar el dispositivo principal ---
         try:
@@ -137,6 +139,8 @@ class PokerTrainer:
         self.info_set_data: Dict[int, Dict[str, Any]] = {}
         self.next_index = 0
         
+        self.evaluator = HandEvaluator()  # Instancia para bucketing
+        
         logger.info("🚀 Definitive Hybrid Trainer initialized")
         logger.info(f"   Batch size: {config.batch_size}")
         logger.info(f"   Max info sets: {config.max_info_sets:,}")
@@ -145,20 +149,53 @@ class PokerTrainer:
         logger.info(f"   Target: Real NLHE 6-player strategies with optimal GPU-CPU bridge")
         logger.info(f"   🚀 PURE JIT functions: ENABLED for maximum performance")
     
-    def _get_or_create_index(self, info_hash: str) -> int:
+    def _get_info_set_bucket(self, hole_cards: np.ndarray, community_cards: np.ndarray, position: int, pot_size: float, stack_size: float) -> str:
+        """
+        Abstracción de Información. Convierte una situación de juego específica en un 'bucket' estratégico general.
+        """
+        # --- Bucket por Ronda de Apuestas ---
+        dealt_community = community_cards[community_cards >= 0]
+        round_map = {0: "Preflop", 3: "Flop", 4: "Turn", 5: "River"}
+        round_name = round_map.get(len(dealt_community), "River")
+
+        # --- Bucket por Fuerza de Mano (usando phevaluator) ---
+        if round_name == "Preflop":
+            card1_rank, card2_rank = sorted([c % 13 for c in hole_cards], reverse=True)
+            is_pair = (card1_rank == card2_rank)
+            is_suited = (hole_cards[0] // 13 == hole_cards[1] // 13)
+            if is_pair and card1_rank >= 10: hand_category = "PremiumPair"
+            elif is_pair: hand_category = "LowPair"
+            elif is_suited and card1_rank >= 9: hand_category = "PremiumSuited"
+            elif card1_rank >= 10 and card2_rank >= 10: hand_category = "PremiumBroadway"
+            else: hand_category = "Other"
+        else:
+            full_hand = np.concatenate((hole_cards, dealt_community))
+            strength_rank = self.evaluator.evaluate_single(full_hand.tolist())
+            if strength_rank <= 10: hand_category = "StraightFlush"
+            elif strength_rank <= 166: hand_category = "Quads"
+            elif strength_rank <= 322: hand_category = "FullHouse"
+            elif strength_rank <= 1599: hand_category = "Flush"
+            elif strength_rank <= 1609: hand_category = "Straight"
+            elif strength_rank <= 2467: hand_category = "ThreeOfAKind"
+            elif strength_rank <= 3325: hand_category = "TwoPair"
+            elif strength_rank <= 6185: hand_category = "OnePair"
+            else: hand_category = "HighCard"
+        return f"R:{round_name}_H:{hand_category}_P:{position}"
+
+    def _get_or_create_index(self, bucket_id: str) -> int:
         """Get or create index for info set hash (CPU operation)"""
-        if info_hash not in self.info_set_hashes:
+        if bucket_id not in self.info_set_hashes:
             # Check if we need to grow arrays
             if self.next_index >= self.config.max_info_sets:
                 self._grow_arrays()
             
             # Create new index
-            self.info_set_hashes[info_hash] = self.next_index
-            self.info_set_data[self.next_index] = {'hash': info_hash}
+            self.info_set_hashes[bucket_id] = self.next_index
+            self.info_set_data[self.next_index] = {'hash': bucket_id}
             self.next_index += 1
             self.total_unique_info_sets += 1
         
-        return self.info_set_hashes[info_hash]
+        return self.info_set_hashes[bucket_id]
     
     def _grow_arrays(self):
         old_size = self.config.max_info_sets
@@ -236,7 +273,7 @@ class PokerTrainer:
             'game_indices': game_indices
         }
     
-    def _map_info_sets_to_indices(self, game_results: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+    def _map_info_sets_to_indices(self, game_results: Dict[str, jnp.ndarray]) -> np.ndarray:
         """
         🧠 CPU-GPU BRIDGE: Optimizado para minimizar la transferencia de datos.
         """
@@ -265,6 +302,8 @@ class PokerTrainer:
             community_cards = community_cards_np[game_idx]
             pot_size = pot_sizes_np[game_idx]
             payoff = payoffs_np[game_idx, player_id]
+            # --- BUCKETING ---
+            bucket_id = self._get_info_set_bucket(hole_cards, community_cards, player_id, pot_size, payoff)
             data_to_hash.append((player_id, hole_cards, community_cards, pot_size, payoff))
 
         # 🚀 ULTRA-FAST HASHING: Use Cython for maximum performance
