@@ -338,11 +338,14 @@ class PokerTrainer:
         batch_size = game_results['hole_cards'].shape[0]
         num_players = game_results['hole_cards'].shape[1]
         
-        # Generar datos aleatorios reales para bucketing (más variedad)
-        rng = jax.random.PRNGKey(self.iteration)
-        positions = jax.random.randint(rng, (batch_size, num_players), 0, 6)
-        pot_sizes = jax.random.uniform(rng, (batch_size, num_players), minval=1.5, maxval=100.0)
-        stack_sizes = jax.random.uniform(rng, (batch_size, num_players), minval=10.0, maxval=200.0)
+        # Generar datos reales por jugador (usar datos del juego real)
+        batch_size, num_players = game_results['hole_cards'].shape[:2]
+        
+        # Usar datos reales del juego
+        positions = jnp.tile(jnp.arange(num_players), (batch_size, 1))
+        stack_sizes = jnp.full_like(game_results['final_pot'][:, None], 100.0).repeat(num_players, axis=1)
+        pot_sizes = game_results['final_pot'][:, None].repeat(num_players, axis=1)
+        num_active = (game_results['hole_cards'][:, :, 0] != -1).astype(jnp.int32)
         
         # Convertir JAX arrays a CuPy para bucketing GPU
         import cupy as cp
@@ -353,7 +356,7 @@ class PokerTrainer:
         positions_cpu = np.array(positions)
         pot_sizes_cpu = np.array(pot_sizes)
         stack_sizes_cpu = np.array(stack_sizes)
-        num_active_cpu = np.array(num_active[:, None].repeat(num_players, axis=1))
+        num_active_cpu = np.array(num_active)
         
         indices_gpu = self._batch_get_buckets_gpu(
             hole_cards_cpu,
