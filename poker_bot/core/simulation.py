@@ -121,9 +121,11 @@ def _simulate_single_game_vectorized(rng_key: jnp.ndarray, game_config: dict) ->
     payoffs = payoffs.at[winner_idx].set(final_pot)
 
     # Salida compatible con JAX: hole_cards de tamaño fijo
+    # Eliminamos el uso de slicing dinámico y usamos asignación directa
     hole_cards_out = jnp.full((MAX_PLAYERS, 2), -1, dtype=hole_cards.dtype)
-    active_hole_cards = lax.dynamic_slice(hole_cards, (0, 0), (players, 2))
-    hole_cards_out = hole_cards_out.at[:players, :].set(active_hole_cards)
+    mask = jnp.arange(MAX_PLAYERS) < players  # [True, ..., False]
+    # Asignamos solo los jugadores activos
+    hole_cards_out = jnp.where(mask[:, None], hole_cards, hole_cards_out)
 
     # Un resultado simplificado para el trainer, que es lo que importa
     return {
