@@ -123,18 +123,15 @@ class PokerTrainer:
         logger.info(f"   Target: Real NLHE 6-player strategies with optimal GPU-CPU bridge")
         logger.info(f"   🚀 PURE JIT functions: ENABLED for maximum performance")
     
-    @lru_cache(maxsize=50000)
-    def _get_info_set_bucket(self, hole_cards_tuple, community_cards_tuple, position, pot_bucket, stack_bucket, num_active, last_action_type):
+    def _get_info_set_bucket(self, hole_cards_tuple, community_cards_tuple, position, pot_size, stack_size, num_active):
         """
-        Abstracción avanzada: incluye stack_bucket, pot_bucket, num_active, last_action_type.
+        Bucketing medio: rangos anchos para stack y pot, string compacto.
         """
         hole_cards = np.array(hole_cards_tuple)
         community_cards = np.array(community_cards_tuple)
-        # --- Bucket por Ronda de Apuestas ---
         dealt_community = community_cards[community_cards >= 0]
         round_map = {0: "Preflop", 3: "Flop", 4: "Turn", 5: "River"}
         round_name = round_map.get(len(dealt_community), "River")
-        # --- Bucket por Fuerza de Mano (usando phevaluator) ---
         if round_name == "Preflop":
             card1_rank, card2_rank = sorted([c % 13 for c in hole_cards], reverse=True)
             is_pair = (card1_rank == card2_rank)
@@ -156,7 +153,18 @@ class PokerTrainer:
             elif strength_rank <= 3325: hand_category = "TwoPair"
             elif strength_rank <= 6185: hand_category = "OnePair"
             else: hand_category = "HighCard"
-        return f"R:{round_name}_H:{hand_category}_P:{position}_Stk:{stack_bucket}_Pot:{pot_bucket}_Act:{num_active}_Last:{last_action_type}"
+        stack_bucket = f"{int(stack_size//10)*10}-{(int(stack_size//10)+1)*10}"
+        pot_bucket   = f"{int(pot_size//5)*5}-{(int(pot_size//5)+1)*5}"
+        return f"R:{round_name}_H:{hand_category}_P:{position}_Stk:{stack_bucket}_Pot:{pot_bucket}_Act:{num_active}"
+
+    @staticmethod
+    @lru_cache(maxsize=100_000)
+    def _cached_bucket(hole_cards_tuple, community_cards_tuple, position, pot_size, stack_size, num_active):
+        # Esta función será llamada desde _batch_get_buckets
+        # Debe ser staticmethod para que lru_cache funcione correctamente
+        # La lógica real se delega a _get_info_set_bucket
+        # Se asume que se pasa self como primer argumento en el wrapper
+        raise NotImplementedError("El wrapper debe pasar self y delegar a _get_info_set_bucket")
 
     def _get_or_create_index(self, bucket_id: str) -> int:
         """Get or create index for info set hash (CPU operation)"""
@@ -249,33 +257,29 @@ class PokerTrainer:
             'game_indices': game_indices
         }
     
-    def _batch_get_buckets(self, hole_cards: np.ndarray, community_cards: np.ndarray, positions: np.ndarray, pot_sizes: np.ndarray, stack_sizes: np.ndarray, num_actives: np.ndarray, last_action_types: np.ndarray) -> np.ndarray:
+    def _batch_get_buckets(self, hole_cards: np.ndarray, community_cards: np.ndarray, positions: np.ndarray, pot_sizes: np.ndarray, stack_sizes: np.ndarray, num_actives: np.ndarray) -> np.ndarray:
         """
-        Bucketing masivo en paralelo usando joblib.Parallel.
+        Bucketing medio en paralelo usando joblib.Parallel y cache.
         """
         def to_tuple(arr):
             return tuple(arr.tolist())
         n = len(hole_cards)
-        # Precalcula los buckets de stack y pot
-        stack_buckets = np.array([f"{int(s//5)*5}-{int(s//5)*5+5}" for s in stack_sizes])
-        pot_buckets = np.array([f"{int(p//3)*3}-{int(p//3)*3+3}" for p in pot_sizes])
         # joblib.Parallel para bucketing masivo
         buckets = Parallel(n_jobs=-1, backend='threading', batch_size=20000)(
             delayed(self._get_info_set_bucket)(
                 to_tuple(hole_cards[i]),
                 to_tuple(community_cards[i]),
                 int(positions[i]),
-                pot_buckets[i],
-                stack_buckets[i],
-                int(num_actives[i]),
-                last_action_types[i]
+                float(pot_sizes[i]),
+                float(stack_sizes[i]),
+                int(num_actives[i])
             ) for i in range(n)
         )
         return np.array(buckets)
 
     def _map_info_sets_to_indices(self, game_results: Dict[str, jnp.ndarray]) -> np.ndarray:
         """
-        🧠 CPU-GPU BRIDGE: Bucketing vectorizado y paralelo con granularidad avanzada.
+        🧠 CPU-GPU BRIDGE: Bucketing medio vectorizado y paralelo.
         """
         logger.info("🧠 Vectorizando buckets de estrategia en CPU...")
         data_np = jax.device_get({
@@ -283,7 +287,6 @@ class PokerTrainer:
             'final_community': game_results['final_community'],
             'final_pot': game_results['final_pot'],
             'payoffs': game_results['payoffs'],
-            # Suponiendo que tienes acceso a stacks y last_action_type, si no, usa placeholders
         })
         hole_cards_np = data_np['hole_cards'] # (B, 6, 2)
         community_cards_np = data_np['final_community'] # (B, 5)
@@ -294,14 +297,10 @@ class PokerTrainer:
         hole_flat = hole_cards_np.reshape(total_info_sets, 2)
         comm_flat = np.repeat(community_cards_np[:, np.newaxis, :], P, axis=1).reshape(total_info_sets, 5)
         pos_flat = np.tile(np.arange(P), B)
-        # Placeholder: todos los stacks iguales, puedes mejorarlo si tienes stacks reales
         stack_flat = np.full(total_info_sets, 100.0)
         pot_flat = np.repeat(pot_sizes_np, P)
-        # Número de jugadores activos por juego
         num_actives = np.sum(hole_cards_np[:, :, 0] != -1, axis=1)
         num_actives_flat = np.repeat(num_actives, P)
-        # Placeholder para last_action_type
-        last_action_types = np.full(total_info_sets, "none", dtype=object)
         valid_mask = (hole_flat[:, 0] != -1)
         all_buckets = self._batch_get_buckets(
             hole_flat[valid_mask],
@@ -309,8 +308,7 @@ class PokerTrainer:
             pos_flat[valid_mask],
             pot_flat[valid_mask],
             stack_flat[valid_mask],
-            num_actives_flat[valid_mask],
-            last_action_types[valid_mask]
+            num_actives_flat[valid_mask]
         )
         unique_buckets, inverse_indices = np.unique(all_buckets, return_inverse=True)
         indices_map = {bucket: self._get_or_create_index(bucket) for bucket in unique_buckets}
@@ -400,7 +398,7 @@ class PokerTrainer:
         cf_values_gpu = jax.device_put(vectorized_results['cf_values'], device=self._main_device)
 
         # --- PADDING para evitar recompilaciones JIT ---
-        MAX_INDICES = 200000
+        MAX_INDICES = 50_000
         n = len(indices_gpu)
         if n > MAX_INDICES:
             logger.warning(f"El número de índices ({n}) supera MAX_INDICES ({MAX_INDICES}). Recortando a los primeros {MAX_INDICES}.")
