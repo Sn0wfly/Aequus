@@ -4,7 +4,7 @@ Requires: cupy-cuda12x (or your CUDA version)
 """
 
 import cupy as cp
-from cupyx.profiler import benchmark
+import time
 
 # -----------------------------
 # 1. Empaquetado de claves
@@ -108,8 +108,13 @@ def benchmark():
         num_active  = rng.integers(2, 7,     N, dtype=cp.uint8)
     )
 
-    t = benchmark(build_or_get_indices, (keys,), n_repeat=5)
-    print(f"GPU throughput: {N/t.mean*1e-6:.1f} M keys/sec")
+    cp.cuda.Device().synchronize()
+    t0 = time.perf_counter()
+    indices = build_or_get_indices(keys)
+    cp.cuda.Device().synchronize()
+    t1 = time.perf_counter()
+    elapsed = t1 - t0
+    print(f"GPU throughput: {N/elapsed*1e-6:.1f} M keys/sec (tiempo: {elapsed:.4f} s)")
 
 if __name__ == '__main__':
     benchmark() 
