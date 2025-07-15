@@ -69,7 +69,7 @@ def test_pluribus_bucketing():
     # Expected results
     print("\n🎯 Expected Results:")
     print("   Fine bucketing: ~2,000-5,000 unique sets")
-    print("   Pluribus bucketing: ~100-400 unique sets")
+    print("   Pluribus bucketing: ~100-200 unique sets (ultra-aggressive)")
     print("   Compression: 10-50x reduction")
     
     return results_fine, results_pluribus
@@ -101,13 +101,13 @@ def test_bucket_distribution():
     
     # Check if bucket IDs are in manageable range
     max_bucket_id = cp.max(bucket_ids)
-    if max_bucket_id > 10000:
+    if max_bucket_id > 1000:
         print(f"   ⚠️  Warning: Bucket IDs too high: {max_bucket_id}")
-        print(f"   Limiting analysis to first 10000 buckets")
-        bucket_ids = cp.clip(bucket_ids, 0, 9999)
+        print(f"   Limiting analysis to first 1000 buckets")
+        bucket_ids = cp.clip(bucket_ids, 0, 999)
     
     # Use histogram instead of bincount to avoid memory issues
-    bucket_counts, _ = cp.histogram(bucket_ids.flatten(), bins=cp.arange(10001))
+    bucket_counts, _ = cp.histogram(bucket_ids.flatten(), bins=cp.arange(1001))
     max_count = cp.max(bucket_counts)
     min_count = cp.min(bucket_counts[bucket_counts > 0])  # Ignore empty buckets
     avg_count = cp.mean(bucket_counts[bucket_counts > 0])  # Only non-empty buckets
@@ -116,6 +116,7 @@ def test_bucket_distribution():
     print(f"   Unique buckets: {unique_buckets:,}")
     print(f"   Estimated max buckets: {estimate_unique_buckets():,}")
     print(f"   Bucket utilization: {unique_buckets/estimate_unique_buckets()*100:.1f}%")
+    print(f"   Target range: 100-200 buckets")
     print(f"   Max hands per bucket: {int(max_count)}")
     print(f"   Min hands per bucket: {int(min_count)}")
     print(f"   Avg hands per bucket: {avg_count:.1f}")

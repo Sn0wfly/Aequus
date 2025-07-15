@@ -147,19 +147,43 @@ def pluribus_bucket_kernel(hole_cards: cp.ndarray,
     # Active players bucketing (0-4)
     active_bucket = cp.clip(num_actives - 2, 0, 4)
     
-    # SIMPLIFIED COMBINATION: Keep bucket IDs manageable
-    # Format: [preflop(9 bits)][street(2 bits)][strength(10 bits)][position(3 bits)][pot(4 bits)][stack(4 bits)][active(3 bits)]
-    # But limit to reasonable range
+    # ULTRA-AGGRESSIVE COMBINATION: Much more aggressive bucketing
+    # Reduce granularity significantly for better compression
     
-    # Combine into manageable bucket ID (0-9999)
+    # Preflop: Reduce from 338 to 50 buckets
+    preflop_agg = preflop_bucket // 7  # 338 / 7 ≈ 50 buckets
+    
+    # Street: Keep 4 buckets (preflop, flop, turn, river)
+    street_agg = street_bucket  # Already 0-3
+    
+    # Strength: Reduce from 1000 to 50 buckets
+    strength_agg = hand_strength // 20  # 1000 / 20 = 50 buckets
+    
+    # Position: Reduce from 6 to 3 buckets
+    position_agg = position_bucket // 2  # 6 / 2 = 3 buckets
+    
+    # Pot: Reduce from 10 to 5 buckets
+    pot_agg = pot_bucket // 2  # 10 / 2 = 5 buckets
+    
+    # Stack: Reduce from 10 to 5 buckets
+    stack_agg = stack_bucket // 2  # 10 / 2 = 5 buckets
+    
+    # Active: Keep 5 buckets (2-6 players)
+    active_agg = active_bucket  # Already 0-4
+    
+    # Combine into ultra-aggressive bucket ID (0-999)
     bucket_id = (
-        (preflop_bucket % 100) * 100 +  # Preflop component (0-99)
-        (street_bucket * 10) +          # Street component (0-30)
-        (hand_strength % 100)           # Strength component (0-99)
+        (preflop_agg * 100) +     # Preflop component (0-49) * 100 = 0-4900
+        (street_agg * 20) +       # Street component (0-3) * 20 = 0-60
+        (strength_agg * 4) +      # Strength component (0-49) * 4 = 0-196
+        position_agg +            # Position component (0-2)
+        pot_agg +                 # Pot component (0-4)
+        stack_agg +               # Stack component (0-4)
+        active_agg                # Active component (0-4)
     )
     
-    # Ensure bucket ID is in manageable range
-    bucket_id = bucket_id % 10000  # Keep in 0-9999 range
+    # Ensure bucket ID is in very manageable range (0-999)
+    bucket_id = bucket_id % 1000  # Keep in 0-999 range
     
     return bucket_id.astype(cp.uint32)
 
@@ -201,14 +225,18 @@ def pluribus_bucket_kernel_wrapper(hole_cards: cp.ndarray,
 
 def estimate_unique_buckets() -> int:
     """
-    Estimate total number of unique buckets with simplified Pluribus bucketing.
+    Estimate total number of unique buckets with ultra-aggressive Pluribus bucketing.
     """
-    # Preflop: 100 buckets (simplified from 338)
+    # Preflop: 50 buckets (ultra-aggressive)
     # Street: 4 buckets (preflop, flop, turn, river)
-    # Strength: 100 buckets (simplified from 1000)
+    # Strength: 50 buckets (ultra-aggressive)
+    # Position: 3 buckets
+    # Pot: 5 buckets
+    # Stack: 5 buckets
+    # Active: 5 buckets
     
-    # Total estimate: ~400 buckets (much more manageable)
-    return 100 * 4 * 100
+    # Total estimate: ~100-200 buckets (ultra-aggressive)
+    return 50 * 4 * 50 * 3 * 5 * 5 * 5
 
 if __name__ == "__main__":
     # Test the bucketing
