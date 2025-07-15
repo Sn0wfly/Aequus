@@ -136,7 +136,7 @@ class ProductionBucketing:
             
             encoded += action_code * (5 ** i)
         
-        return cp.clip(encoded, 0, 19)
+        return cp.array([min(max(encoded, 0), 19)])
 
 class HybridArchitecture:
     """
