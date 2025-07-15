@@ -5,5 +5,8 @@ psutil
 phevaluator
 Cython
 numpy
-# JAX se instala por separado para el soporte de CUDA 
-open-spiel[jax]>=1.5 
+joblib
+lz4
+memory_profiler
+# JAX se instala por separado para el soporte de CUDA
+open-spiel[jax]>=1.5
