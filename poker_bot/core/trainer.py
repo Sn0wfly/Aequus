@@ -402,6 +402,14 @@ class PokerTrainer:
         print(f"🔧 Bucketing: {bucket_type}")
         print(f"Primeras 5 keys: {cp.asnumpy(keys_gpu)[:5]}")
         print(f"Primeras 5 indices: {cp.asnumpy(indices_gpu)[:5]}")
+        
+        # 🔧 DEBUG: Verificar rango de keys antes de MCCFR
+        max_key = cp.max(keys_gpu)
+        min_key = cp.min(keys_gpu)
+        print(f"🔍 Keys range: {min_key} to {max_key}")
+        if max_key > 25000:
+            print(f"⚠️  WARNING: Keys too high, clamping to 25000")
+            keys_gpu = cp.clip(keys_gpu, 0, 25000)
 
         # 3. Convertir a tensores de estado JAX
         states = jax.vmap(self._state_to_tensor)(game_results)

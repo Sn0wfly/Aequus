@@ -102,6 +102,14 @@ def pluribus_bucket_kernel(hole_cards: cp.ndarray,
     """
     batch_size = hole_cards.shape[0]
     
+    # 🔧 PARCHE DE SEGURIDAD: Clamp todos los inputs para evitar acceso ilegal
+    hole_cards = cp.clip(hole_cards, 0, 51)
+    community_cards = cp.clip(community_cards, -1, 51)
+    positions = cp.clip(positions, 0, 5)
+    stack_sizes = cp.clip(stack_sizes, 1.0, 200.0)
+    pot_sizes = cp.clip(pot_sizes, 1.0, 200.0)
+    num_actives = cp.clip(num_actives, 2, 6)
+    
     # Get card ranks and suits
     hole_ranks = hole_cards // 4
     hole_suits = hole_cards % 4

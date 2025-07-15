@@ -95,6 +95,9 @@ def mccfr_rollout_gpu(keys_gpu: cp.ndarray, N_rollouts: int = 100, num_actions: 
     Returns:
         cf_values: (B, num_actions) counterfactual values as float32 ready for scatter_update
     """
+    # 🔧 PARCHE DE SEGURIDAD: Clamp keys para evitar acceso ilegal
+    keys_gpu = cp.clip(keys_gpu, 0, 25000)
+    
     batch_size = keys_gpu.size
     
     # Allocate output array

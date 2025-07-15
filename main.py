@@ -42,6 +42,23 @@ def create_super_pluribus_config():
         N_rollouts=500           # GPU-accelerated rollouts per bucket
     )
 
+def create_debug_config():
+    """Create debug configuration with reduced batch size"""
+    return TrainerConfig(
+        batch_size=512,          # Debug - small batch size
+        learning_rate=0.05,      # Pluribus-like learning rate
+        temperature=1.0,
+        num_actions=14,          # Pluribus-like action set
+        dtype='bfloat16',
+        accumulation_dtype='float32',
+        max_info_sets=25000,     # 25k buckets fixed for super-human quality
+        growth_factor=1.5,
+        chunk_size=20000,
+        gpu_bucket=False,
+        use_pluribus_bucketing=True,  # Super-Pluribus bucketing
+        N_rollouts=100           # Debug - reduced rollouts
+    )
+
 def create_fine_bucketing_config():
     """Create fine bucketing configuration for comparison"""
     return TrainerConfig(
@@ -132,7 +149,7 @@ def train_model(config: TrainerConfig, num_iterations: int, save_every: int, sav
 
 def main():
     parser = argparse.ArgumentParser(description="Aequus Super-Pluribus Training")
-    parser.add_argument("--config", choices=["super_pluribus", "fine"], 
+    parser.add_argument("--config", choices=["super_pluribus", "fine", "debug"], 
                        default="super_pluribus", help="Training configuration")
     parser.add_argument("--iterations", type=int, default=1000, 
                        help="Number of training iterations")
@@ -146,6 +163,8 @@ def main():
     # Create configuration
     if args.config == "super_pluribus":
         config = create_super_pluribus_config()
+    elif args.config == "debug":
+        config = create_debug_config()
     else:
         config = create_fine_bucketing_config()
     
