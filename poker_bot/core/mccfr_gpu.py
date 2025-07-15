@@ -11,9 +11,9 @@ void rollout_kernel(
     float* __restrict__ cf_values,
     const unsigned long long seed,
     const int batch_size,
-    const int N_rollouts
+    const int N_rollouts,
+    const int num_actions
 ) {
-    const int num_actions = 4;  // fold, call, bet, raise
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int batch_idx = idx / (num_actions * N_rollouts);
     int action_idx = (idx % (num_actions * N_rollouts)) / N_rollouts;
@@ -35,7 +35,7 @@ void rollout_kernel(
     // Use the key to seed the simulation
     for (int depth = 0; depth < max_depth; depth++) {
         // Simple action selection based on key
-        int action = (state >> (depth * 8)) % 4;  // 0=fold, 1=call, 2=bet, 3=raise
+        int action = (state >> (depth * 8)) % num_actions;  // Dynamic action range
         
         // Update state for next iteration
         state = state * 1103515245ULL + 12345ULL;
@@ -44,11 +44,11 @@ void rollout_kernel(
         if (action == 0) {  // fold
             payoff = -0.5f;  // Small loss
             break;
-        } else if (action == 1) {  // call
+        } else if (action < num_actions / 3) {  // call-like actions
             payoff = (float)(state % 200 - 100) / 100.0f;  // -1.0 to 1.0
-        } else if (action == 2) {  // bet
+        } else if (action < 2 * num_actions / 3) {  // bet-like actions
             payoff = (float)(state % 300 - 150) / 150.0f;  // -1.0 to 1.0
-        } else {  // raise
+        } else {  // raise-like actions
             payoff = (float)(state % 400 - 200) / 200.0f;  // -1.0 to 1.0
         }
     }
@@ -63,9 +63,9 @@ extern "C" __global__
 void normalize_rollouts_kernel(
     float* cf_values,
     const int batch_size,
-    const int N_rollouts
+    const int N_rollouts,
+    const int num_actions
 ) {
-    const int num_actions = 4;  // fold, call, bet, raise
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int batch_idx = idx / num_actions;
     int action_idx = idx % num_actions;
@@ -83,19 +83,19 @@ ROLLOUT_MODULE = cp.RawModule(code=ROLLOUT_KERNEL)
 rollout_kernel = ROLLOUT_MODULE.get_function("rollout_kernel")
 normalize_kernel = ROLLOUT_MODULE.get_function("normalize_rollouts_kernel")
 
-def mccfr_rollout_gpu(keys_gpu: cp.ndarray, N_rollouts: int = 100) -> cp.ndarray:
+def mccfr_rollout_gpu(keys_gpu: cp.ndarray, N_rollouts: int = 100, num_actions: int = 4) -> cp.ndarray:
     """
     Monte-Carlo CFR rollout on GPU.
     
     Args:
         keys_gpu: (B,) uint64 keys (1-D array)
         N_rollouts: Number of rollouts per action (default: 100)
+        num_actions: Number of actions (default: 4)
     
     Returns:
-        cf_values: (B, 4) counterfactual values as float32 ready for scatter_update
+        cf_values: (B, num_actions) counterfactual values as float32 ready for scatter_update
     """
     batch_size = keys_gpu.size
-    num_actions = 4  # fold, call, bet, raise
     
     # Allocate output array
     cf_values = cp.zeros((batch_size, num_actions), dtype=cp.float32)
@@ -114,7 +114,8 @@ def mccfr_rollout_gpu(keys_gpu: cp.ndarray, N_rollouts: int = 100) -> cp.ndarray
             cf_values,
             cp.uint64(int(time.time() * 1000)),  # Seed
             batch_size,
-            N_rollouts
+            N_rollouts,
+            num_actions
         )
     )
     
@@ -126,7 +127,7 @@ def mccfr_rollout_gpu(keys_gpu: cp.ndarray, N_rollouts: int = 100) -> cp.ndarray
     normalize_kernel(
         (normalize_blocks,),
         (256,),
-        (cf_values, batch_size, N_rollouts)
+        (cf_values, batch_size, N_rollouts, num_actions)
     )
     
     # Synchronize again

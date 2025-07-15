@@ -408,7 +408,7 @@ class PokerTrainer:
 
         # 4. Generar cf_values con MCCFR GPU (Monte-Carlo CFR vectorizado)
         # Ya no necesitamos la línea errónea de conversión - usamos keys reales
-        cf_values_gpu = mccfr_rollout_gpu(keys_gpu, N_rollouts=self.config.N_rollouts)
+        cf_values_gpu = mccfr_rollout_gpu(keys_gpu, N_rollouts=self.config.N_rollouts, num_actions=self.config.num_actions)
         cf_values = cp.asnumpy(cf_values_gpu).astype(self.config.dtype)
 
         # 5. Actualizar q_values y strategies con scatter GPU-JAX
