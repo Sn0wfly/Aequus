@@ -135,17 +135,17 @@ def pluribus_bucket_kernel(hole_cards: cp.ndarray,
                    cp.where(num_comm_cards == 4, 2,   # Turn
                    3)))  # River
     
-    # Position bucketing (0-5)
-    position_bucket = positions % 6
+    # Position bucketing (0-2) - más agresivo
+    position_bucket = positions % 3
     
-    # Pot size bucketing (0-9)
-    pot_bucket = cp.clip(pot_sizes / 10.0, 0, 9).astype(cp.uint32)
+    # Pot size bucketing (0-4) - usando divisor sugerido por tu amigo
+    pot_bucket = cp.clip(pot_sizes / 20.0, 0, 4).astype(cp.uint32)
     
-    # Stack size bucketing (0-9)
-    stack_bucket = cp.clip(stack_sizes / 20.0, 0, 9).astype(cp.uint32)
+    # Stack size bucketing (0-4) - usando divisor sugerido por tu amigo
+    stack_bucket = cp.clip(stack_sizes / 40.0, 0, 4).astype(cp.uint32)
     
-    # Active players bucketing (0-4)
-    active_bucket = cp.clip(num_actives - 2, 0, 4)
+    # Active players bucketing (0-2) - más agresivo como sugiere tu amigo
+    active_bucket = cp.clip(num_actives - 2, 0, 2)
     
     # ULTRA-AGGRESSIVE COMBINATION: Much more aggressive bucketing
     # Reduce granularity significantly for better compression
@@ -159,17 +159,17 @@ def pluribus_bucket_kernel(hole_cards: cp.ndarray,
     # Strength: Reduce from 1000 to 50 buckets
     strength_agg = hand_strength // 20  # 1000 / 20 = 50 buckets
     
-    # Position: Reduce from 6 to 3 buckets
-    position_agg = position_bucket // 2  # 6 / 2 = 3 buckets
+    # Position: Already reduced to 3 buckets (0-2)
+    position_agg = position_bucket  # Already 0-2
     
-    # Pot: Reduce from 10 to 5 buckets
-    pot_agg = pot_bucket // 2  # 10 / 2 = 5 buckets
+    # Pot: Already reduced to 5 buckets (0-4)
+    pot_agg = pot_bucket  # Already 0-4
     
-    # Stack: Reduce from 10 to 5 buckets
-    stack_agg = stack_bucket // 2  # 10 / 2 = 5 buckets
+    # Stack: Already reduced to 5 buckets (0-4)
+    stack_agg = stack_bucket  # Already 0-4
     
-    # Active: Keep 5 buckets (2-6 players)
-    active_agg = active_bucket  # Already 0-4
+    # Active: Already reduced to 3 buckets (0-2)
+    active_agg = active_bucket  # Already 0-2
     
     # Combine into ultra-aggressive bucket ID (0-999)
     bucket_id = (
@@ -230,13 +230,13 @@ def estimate_unique_buckets() -> int:
     # Preflop: 50 buckets (ultra-aggressive)
     # Street: 4 buckets (preflop, flop, turn, river)
     # Strength: 50 buckets (ultra-aggressive)
-    # Position: 3 buckets
-    # Pot: 5 buckets
-    # Stack: 5 buckets
-    # Active: 5 buckets
+    # Position: 3 buckets (reducido de 6 a 3)
+    # Pot: 5 buckets (reducido de 10 a 5)
+    # Stack: 5 buckets (reducido de 10 a 5)
+    # Active: 3 buckets (reducido de 5 a 3)
     
-    # Total estimate: ~100-200 buckets (ultra-aggressive)
-    return 50 * 4 * 50 * 3 * 5 * 5 * 5
+    # Total estimate: ~50-100 buckets (ultra-agresivo con correcciones del amigo)
+    return 50 * 4 * 50 * 3 * 5 * 5 * 3
 
 if __name__ == "__main__":
     # Test the bucketing

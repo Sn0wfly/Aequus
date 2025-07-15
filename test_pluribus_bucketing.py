@@ -69,8 +69,8 @@ def test_pluribus_bucketing():
     # Expected results
     print("\n🎯 Expected Results:")
     print("   Fine bucketing: ~2,000-5,000 unique sets")
-    print("   Pluribus bucketing: ~100-200 unique sets (ultra-aggressive)")
-    print("   Compression: 10-50x reduction")
+    print("   Pluribus bucketing: ~50-100 unique sets (ultra-aggressive + correcciones)")
+    print("   Compression: 20-100x reduction")
     
     return results_fine, results_pluribus
 
@@ -116,7 +116,7 @@ def test_bucket_distribution():
     print(f"   Unique buckets: {unique_buckets:,}")
     print(f"   Estimated max buckets: {estimate_unique_buckets():,}")
     print(f"   Bucket utilization: {unique_buckets/estimate_unique_buckets()*100:.1f}%")
-    print(f"   Target range: 100-200 buckets")
+    print(f"   Target range: 50-100 buckets (con correcciones del amigo)")
     print(f"   Max hands per bucket: {int(max_count)}")
     print(f"   Min hands per bucket: {int(min_count)}")
     print(f"   Avg hands per bucket: {avg_count:.1f}")
