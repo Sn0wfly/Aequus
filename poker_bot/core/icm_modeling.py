@@ -55,25 +55,25 @@ class ICMModel:
         table_size = 10 * 6 * 20  # 10 stack classes × 6 positions × 20 pot sizes
         table = cp.zeros((10, 6, 20), dtype=cp.float32)
         
-        for stack_class in range(10):
-            for position in range(6):
-                for pot_idx in range(20):
-                    # Simplified ICM calculation
-                    base_equity = 0.5
-                    
-                    # Stack depth adjustment
-                    stack_factor = (10 - stack_class) / 10.0
-                    
-                    # Position adjustment
-                    pos_factor = (6 - position) / 6.0
-                    
-                    # Pot size adjustment
-                    pot_factor = pot_idx / 20.0
-                    
-                    # Combine factors
-                    icm_equity = base_equity + (stack_factor * pos_factor * pot_factor * 0.3)
-                    table[stack_class, position, pot_idx] = cp.clip(icm_equity, 0.1, 0.9)
-                    
+        # Vectorized calculation
+        stack_classes = cp.arange(10)
+        positions = cp.arange(6)
+        pot_indices = cp.arange(20)
+        
+        # Create meshgrid for vectorized operations
+        sc, pos, pot = cp.meshgrid(stack_classes, positions, pot_indices, indexing='ij')
+        
+        # Calculate factors
+        stack_factor = (10 - sc) / 10.0
+        pos_factor = (6 - pos) / 6.0
+        pot_factor = pot / 20.0
+        
+        # Calculate ICM equity
+        icm_equity = 0.5 + (stack_factor * pos_factor * pot_factor * 0.3)
+        
+        # Clip values
+        table = cp.clip(icm_equity, 0.1, 0.9)
+        
         return table
     
     def get_icm_adjustment(self, stack_sizes: cp.ndarray,
