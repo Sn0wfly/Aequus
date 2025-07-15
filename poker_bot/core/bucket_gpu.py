@@ -101,6 +101,14 @@ def build_or_get_indices(keys_gpu, table_keys, table_vals, counter):
     counter: CuPy array uint32 shape=(1,) (persistente)
     Devuelve: indices_gpu CuPy array uint32
     """
+    # DEBUG: verificar keys antes del clamping
+    print(f"DEBUG: keys_gpu min={keys_gpu.min()}, max={keys_gpu.max()}, shape={keys_gpu.shape}")
+    
+    # 🔧 PARCHE DE SEGURIDAD: Clamp keys para evitar acceso ilegal
+    keys_gpu = cp.clip(keys_gpu, 0, 2**32-1)  # Limitar a 32 bits para evitar overflow
+    
+    print(f"DEBUG: After clamp - keys_gpu min={keys_gpu.min()}, max={keys_gpu.max()}")
+    
     N = keys_gpu.size
     indices_gpu = cp.empty(N, dtype=cp.uint32)
     table_size = table_keys.size
