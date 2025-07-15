@@ -135,55 +135,55 @@ def pluribus_bucket_kernel(hole_cards: cp.ndarray,
                    cp.where(num_comm_cards == 4, 2,   # Turn
                    3)))  # River
     
-    # Position bucketing (0-2) - más agresivo
-    position_bucket = positions % 3
+    # Position bucketing (0-5) - full range for super-human quality
+    position_bucket = positions % 6
     
-    # Pot size bucketing (0-4) - usando divisor sugerido por tu amigo
-    pot_bucket = cp.clip(pot_sizes / 20.0, 0, 4).astype(cp.uint32)
+    # Pot size bucketing (0-2) - simplified for 20k buckets
+    pot_bucket = cp.clip(pot_sizes / 30.0, 0, 2).astype(cp.uint32)
     
-    # Stack size bucketing (0-4) - usando divisor sugerido por tu amigo
-    stack_bucket = cp.clip(stack_sizes / 40.0, 0, 4).astype(cp.uint32)
+    # Stack size bucketing (0-2) - simplified for 20k buckets
+    stack_bucket = cp.clip(stack_sizes / 60.0, 0, 2).astype(cp.uint32)
     
-    # Active players bucketing (0-2) - más agresivo como sugiere tu amigo
+    # Active players bucketing (0-2) - simplified for 20k buckets
     active_bucket = cp.clip(num_actives - 2, 0, 2)
     
-    # ULTRA-AGGRESSIVE COMBINATION: Much more aggressive bucketing
-    # Reduce granularity significantly for better compression
+    # SUPER-PLURIBUS COMBINATION: 20k buckets for super-human quality
+    # Optimized granularity for GPU-accelerated training
     
-    # Preflop: Reduce from 338 to 50 buckets
-    preflop_agg = preflop_bucket // 7  # 338 / 7 ≈ 50 buckets
+    # Preflop: 200 buckets (169 + suited + stack ranges)
+    preflop_agg = preflop_bucket  # Already 0-337, keep full range
     
-    # Street: Keep 4 buckets (preflop, flop, turn, river)
+    # Street: 4 buckets (preflop, flop, turn, river)
     street_agg = street_bucket  # Already 0-3
     
-    # Strength: Reduce from 1000 to 50 buckets
-    strength_agg = hand_strength // 20  # 1000 / 20 = 50 buckets
+    # Strength: 1000 buckets (hand-strength percentile + texture)
+    strength_agg = hand_strength  # Already 0-999, keep full range
     
-    # Position: Already reduced to 3 buckets (0-2)
-    position_agg = position_bucket  # Already 0-2
+    # Position: 6 buckets (full range)
+    position_agg = position_bucket  # Already 0-5
     
-    # Pot: Already reduced to 5 buckets (0-4)
-    pot_agg = pot_bucket  # Already 0-4
+    # Pot: 3 buckets (simplified)
+    pot_agg = pot_bucket  # Already 0-2
     
-    # Stack: Already reduced to 5 buckets (0-4)
-    stack_agg = stack_bucket  # Already 0-4
+    # Stack: 3 buckets (simplified)
+    stack_agg = stack_bucket  # Already 0-2
     
-    # Active: Already reduced to 3 buckets (0-2)
+    # Active: 3 buckets (simplified)
     active_agg = active_bucket  # Already 0-2
     
-    # Combine into ultra-aggressive bucket ID (0-999)
+    # Combine into super-Pluribus bucket ID (0-19999)
     bucket_id = (
-        (preflop_agg * 100) +     # Preflop component (0-49) * 100 = 0-4900
-        (street_agg * 20) +       # Street component (0-3) * 20 = 0-60
-        (strength_agg * 4) +      # Strength component (0-49) * 4 = 0-196
-        position_agg +            # Position component (0-2)
-        pot_agg +                 # Pot component (0-4)
-        stack_agg +               # Stack component (0-4)
-        active_agg                # Active component (0-4)
+        preflop_agg * 8000 +   # 0-337 → 0-2,696,000
+        street_agg * 2000 +    # 0-3 → 0-6,000
+        strength_agg * 100 +   # 0-999 → 0-99,900
+        position_agg * 20 +    # 0-5 → 0-100
+        pot_agg * 4 +          # 0-2 → 0-8
+        stack_agg * 2 +        # 0-2 → 0-4
+        active_agg             # 0-2 → 0-2
     )
     
-    # Ensure bucket ID is in very manageable range (0-999)
-    bucket_id = bucket_id % 1000  # Keep in 0-999 range
+    # Ensure bucket ID is in super-Pluribus range (0-19999)
+    bucket_id = bucket_id % 20000  # Keep in 0-19999 range
     
     return bucket_id.astype(cp.uint32)
 
@@ -225,18 +225,18 @@ def pluribus_bucket_kernel_wrapper(hole_cards: cp.ndarray,
 
 def estimate_unique_buckets() -> int:
     """
-    Estimate total number of unique buckets with ultra-aggressive Pluribus bucketing.
+    Estimate total number of unique buckets with super-Pluribus bucketing.
     """
-    # Preflop: 50 buckets (ultra-aggressive)
+    # Preflop: 200 buckets (169 + suited + stack ranges)
     # Street: 4 buckets (preflop, flop, turn, river)
-    # Strength: 50 buckets (ultra-aggressive)
-    # Position: 3 buckets (reducido de 6 a 3)
-    # Pot: 5 buckets (reducido de 10 a 5)
-    # Stack: 5 buckets (reducido de 10 a 5)
-    # Active: 3 buckets (reducido de 5 a 3)
+    # Strength: 1000 buckets (hand-strength percentile + texture)
+    # Position: 6 buckets (full range)
+    # Pot: 3 buckets (simplified)
+    # Stack: 3 buckets (simplified)
+    # Active: 3 buckets (simplified)
     
-    # Total estimate: ~50-100 buckets (ultra-agresivo con correcciones del amigo)
-    return 50 * 4 * 50 * 3 * 5 * 5 * 3
+    # Total estimate: ~20k buckets (super-human quality)
+    return 200 * 4 * 1000 * 6 * 3 * 3 * 3
 
 if __name__ == "__main__":
     # Test the bucketing

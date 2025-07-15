@@ -48,18 +48,19 @@ def make_dummy_cf_values(batch_size, num_players, num_actions):
 
 @dataclass
 class TrainerConfig:
-    """Configuration for PokerTrainer"""
-    batch_size: int = 8192
-    learning_rate: float = 0.1
+    """Configuration for PokerTrainer - H100 Optimized"""
+    batch_size: int = 32768  # H100 optimized - fills VRAM
+    learning_rate: float = 0.05  # Pluribus-like learning rate
     temperature: float = 1.0
-    num_actions: int = 4  # fold, call, bet, raise
+    num_actions: int = 14  # Pluribus-like action set
     dtype: jnp.dtype = jnp.bfloat16
     accumulation_dtype: jnp.dtype = jnp.float32
-    max_info_sets: int = 1000000  # 1M info sets max
+    max_info_sets: int = 50000  # 50k buckets fixed for super-human quality
     growth_factor: float = 1.5  # Grow by 50% when full
     chunk_size: int = 20000  # Subo chunk_size a 20_000
     gpu_bucket: bool = False  # Placeholder para bucketing en GPU
-    use_pluribus_bucketing: bool = True  # Usar bucketing ultra-agresivo estilo Pluribus
+    use_pluribus_bucketing: bool = True  # Usar bucketing super-Pluribus
+    N_rollouts: int = 500  # GPU-accelerated rollouts per bucket
 
 # 🚀 PURE JIT-COMPILED FUNCTION (Outside class for maximum performance)
 @partial(jax.jit, static_argnums=(4, 5))
@@ -407,7 +408,7 @@ class PokerTrainer:
 
         # 4. Generar cf_values con MCCFR GPU (Monte-Carlo CFR vectorizado)
         # Ya no necesitamos la línea errónea de conversión - usamos keys reales
-        cf_values_gpu = mccfr_rollout_gpu(keys_gpu, N_rollouts=100)
+        cf_values_gpu = mccfr_rollout_gpu(keys_gpu, N_rollouts=self.config.N_rollouts)
         cf_values = cp.asnumpy(cf_values_gpu).astype(self.config.dtype)
 
         # 5. Actualizar q_values y strategies con scatter GPU-JAX
