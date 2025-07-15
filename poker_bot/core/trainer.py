@@ -346,17 +346,25 @@ class PokerTrainer:
         # Stack sizes variables por jugador (simular stacks reales)
         rng_stacks = jax.random.split(rng, self.config.batch_size * 6).reshape(self.config.batch_size, 6, -1)
         base_stacks = jnp.full((self.config.batch_size, 6), 100.0)
-        stack_variation = jax.random.uniform(rng_stacks[:, :, 0], (self.config.batch_size, 6), minval=-20.0, maxval=20.0)
+        
+        # Usar vmap para aplicar random.uniform a cada key individualmente
+        def generate_stack_variation(keys):
+            return jax.vmap(lambda k: jax.random.uniform(k, shape=(), minval=-20.0, maxval=20.0))(keys)
+        stack_variation = jax.vmap(generate_stack_variation)(rng_stacks)
         stack_sizes = base_stacks + stack_variation
         
         # Pot sizes variables por jugador (simular pots reales)
         base_pot = game_results['final_pot'][:, None]
-        pot_variation = jax.random.uniform(rng_stacks[:, :, 1], (self.config.batch_size, 6), minval=0.5, maxval=1.5)
+        def generate_pot_variation(keys):
+            return jax.vmap(lambda k: jax.random.uniform(k, shape=(), minval=0.5, maxval=1.5))(keys)
+        pot_variation = jax.vmap(generate_pot_variation)(rng_stacks)
         pot_sizes = base_pot * pot_variation
         
         # Active players variables por jugador (simular jugadores que se van)
         base_active = (game_results['hole_cards'][:, :, 0] != -1).astype(jnp.int32)
-        active_variation = jax.random.randint(rng_stacks[:, :, 2], (self.config.batch_size, 6), minval=-1, maxval=2)
+        def generate_active_variation(keys):
+            return jax.vmap(lambda k: jax.random.randint(k, shape=(), minval=-1, maxval=2))(keys)
+        active_variation = jax.vmap(generate_active_variation)(rng_stacks)
         num_active = jnp.clip(base_active + active_variation, 2, 6)
 
         # Convertir a numpy/cupy
