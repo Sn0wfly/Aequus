@@ -240,7 +240,7 @@ class PokerTrainer:
                                num_actives):
         """
         Fine-grained GPU bucketing + lookup persistente.
-        Devuelve indices_gpu (CuPy array uint32)
+        Devuelve (indices_gpu, keys_gpu) - tuple con ambos arrays
         """
         import cupy as cp
         import numpy as np
@@ -272,7 +272,9 @@ class PokerTrainer:
             self.table_vals,
             self.counter
         )
-        return indices_gpu
+        
+        # 4. CAMBIO CRÍTICO: Devolver AMBOS arrays
+        return indices_gpu, keys_gpu.reshape(-1)
 
     def train(self, num_iterations: int, save_path: str, save_interval: int):
         """
@@ -370,7 +372,7 @@ class PokerTrainer:
         # Convertir a numpy/cupy
         import numpy as np
         import cupy as cp
-        indices_gpu = self._batch_get_buckets_gpu(
+        indices_gpu, keys_gpu = self._batch_get_buckets_gpu(
             np.array(game_results['hole_cards']),
             np.array(game_results['final_community'][:, None, :].repeat(6, axis=1)),
             np.array(positions),
@@ -380,11 +382,15 @@ class PokerTrainer:
         )
         indices_cpu = cp.asnumpy(indices_gpu)
 
+        # Debug: verificar que tenemos keys reales vs indices
+        print(f"Primeras 5 keys: {cp.asnumpy(keys_gpu)[:5]}")
+        print(f"Primeras 5 indices: {cp.asnumpy(indices_gpu)[:5]}")
+
         # 3. Convertir a tensores de estado JAX
         states = jax.vmap(self._state_to_tensor)(game_results)
 
         # 4. Generar cf_values con MCCFR GPU (Monte-Carlo CFR vectorizado)
-        keys_gpu = cp.asarray(indices_gpu, dtype=cp.uint64)
+        # Ya no necesitamos la línea errónea de conversión - usamos keys reales
         cf_values_gpu = mccfr_rollout_gpu(keys_gpu, N_rollouts=100)
         cf_values = cp.asnumpy(cf_values_gpu).astype(self.config.dtype)
 
