@@ -6,7 +6,7 @@ Phase 4 Enhancement: 4M buckets with hybrid CPU/GPU architecture
 import cupy as cp
 import numpy as np
 import jax.numpy as jnp
-from typing import Tuple, Dict, Optional
+from typing import Tuple, Dict, Optional, List
 import threading
 import queue
 from concurrent.futures import ThreadPoolExecutor
