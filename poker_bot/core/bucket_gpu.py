@@ -7,23 +7,47 @@ import cupy as cp
 import time
 
 # -----------------------------
-# 1. Empaquetado uint64
+# 1. MurmurHash3 64-bit finalizer
+# -----------------------------
+def _hash_mix(k: int) -> int:
+    """MurmurHash3 64-bit finalizer (simplified, no seeds)"""
+    k = (k ^ (k >> 33)) & 0xFFFFFFFFFFFFFFFF
+    k = (k * 0xFF51AFD7ED558CCD) & 0xFFFFFFFFFFFFFFFF
+    k = (k ^ (k >> 33)) & 0xFFFFFFFFFFFFFFFF
+    k = (k * 0xC4CEB9FE1A85EC53) & 0xFFFFFFFFFFFFFFFF
+    k = (k ^ (k >> 33)) & 0xFFFFFFFFFFFFFFFF
+    return k
+
+# -----------------------------
+# 2. Empaquetado uint64 con hash
 # -----------------------------
 def pack_keys(hole_hash, round_id, position,
               stack_bucket, pot_bucket, num_active):
-    return (
-        (hole_hash.astype(cp.uint64) << 24) |
-        (round_id.astype(cp.uint64) << 16) |
-        (position.astype(cp.uint64) << 8) |
-        (stack_bucket.astype(cp.uint64) << 4) |
-        (pot_bucket.astype(cp.uint64) << 1) |
-        (num_active.astype(cp.uint64))
+    # Create raw key with proper bit masks
+    raw = (
+        (round_id & 0xF) << 48 |
+        (hole_hash & 0xFF) << 40 |
+        (position & 0x7) << 36 |
+        (stack_bucket & 0xFF) << 28 |
+        (pot_bucket & 0xFF) << 20 |
+        (num_active & 0xF) << 16
     )
+    # Apply MurmurHash3
+    return cp.vectorize(_hash_mix)(raw.astype(cp.uint64))
 
 # -----------------------------
-# 2. Kernel CUDA optimizado
+# 3. Kernel CUDA optimizado con hash
 # -----------------------------
 _KERNEL = r'''
+__device__ unsigned long long hash_mix(unsigned long long k) {
+    k ^= k >> 33;
+    k *= 0xFF51AFD7ED558CCDULL;
+    k ^= k >> 33;
+    k *= 0xC4CEB9FE1A85EC53ULL;
+    k ^= k >> 33;
+    return k;
+}
+
 extern "C" __global__
 void bucket_kernel(
     const unsigned long long* __restrict__ keys,
@@ -38,6 +62,8 @@ void bucket_kernel(
     if (tid >= N) return;
 
     unsigned long long key = keys[tid];
+    // Apply hash function to improve distribution
+    key = hash_mix(key);
     unsigned int slot = (unsigned int)(key & mask);
 
     // MAX 3 attempts to avoid infinite loops
@@ -65,7 +91,7 @@ void bucket_kernel(
 _bucket_kernel = cp.RawKernel(_KERNEL, 'bucket_kernel')
 
 # -----------------------------
-# 3. Wrapper optimizado
+# 4. Wrapper optimizado
 # -----------------------------
 def build_or_get_indices(keys_gpu, table_keys, table_vals, counter):
     """
@@ -100,7 +126,7 @@ def build_or_get_indices_ephemeral(keys_gpu, table_size=2**26):
     return build_or_get_indices(keys_gpu, table_keys, table_vals, counter)
 
 # -----------------------------
-# 4. Test del counter
+# 5. Test del counter
 # -----------------------------
 def test_counter():
     """Test mínimo para verificar que el counter funciona"""
@@ -124,7 +150,7 @@ def test_counter():
     return int(counter[0])
 
 # -----------------------------
-# 5. Benchmark
+# 6. Benchmark
 # -----------------------------
 def benchmark():
     N = 1_000_000
