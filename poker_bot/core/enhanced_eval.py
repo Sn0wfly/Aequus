@@ -41,13 +41,10 @@ class EnhancedHandEvaluator:
         equity_table = cp.zeros((169, 169), dtype=cp.float32)
         
         # Populate with realistic equity values
-        for i in range(169):
-            for j in range(169):
-                # Simplified equity calculation
-                equity = 0.5 + (i - j) * 0.001
-                equity = cp.clip(equity, 0.0, 1.0)
-                equity_table[i, j] = equity
-                
+        i_indices, j_indices = cp.meshgrid(cp.arange(169), cp.arange(169), indexing='ij')
+        equity = 0.5 + (i_indices - j_indices) * 0.001
+        equity_table = cp.clip(equity, 0.0, 1.0)
+        
         return equity_table
     
     def calculate_equity_fast(self, hole_cards: cp.ndarray, 
@@ -108,7 +105,7 @@ class EnhancedHandEvaluator:
         
         return equity
     
-    def calculate_blocker_impact(self, hole_cards: cp.ndarray, 
+    def calculate_blocker_impact(self, hole_cards: cp.ndarray,
                                community_cards: cp.ndarray) -> cp.ndarray:
         """
         Calculate blocker impact on opponent ranges
@@ -124,20 +121,22 @@ class EnhancedHandEvaluator:
         all_cards = cp.concatenate([hole_cards, community_cards], axis=1)
         all_cards = cp.clip(all_cards, 0, 51)  # Remove -1 padding
         
-        # Calculate blocker score
+        # Vectorized blocker score calculation
         blocker_score = cp.zeros(batch_size, dtype=cp.float32)
         
+        # Create weight array for vectorized lookup
+        weight_array = cp.array([self.blocker_weights.get(i, 1.0) for i in range(52)])
+        
+        # Calculate scores for each batch
         for i in range(batch_size):
             cards = all_cards[i]
-            valid_cards = cards[cards >= 0]
+            valid_mask = cards >= 0
+            valid_cards = cards[valid_mask]
             
-            # Sum blocker weights
-            score = 0.0
-            for card in valid_cards:
-                score += self.blocker_weights.get(int(card), 1.0)
-            
-            # Normalize
-            blocker_score[i] = min(score / 10.0, 1.0)
+            if len(valid_cards) > 0:
+                weights = weight_array[valid_cards.astype(cp.int32)]
+                score = float(cp.sum(weights))
+                blocker_score[i] = min(score / 10.0, 1.0)
         
         return blocker_score
     

@@ -76,8 +76,8 @@ class ICMModel:
                     
         return table
     
-    def get_icm_adjustment(self, stack_sizes: cp.ndarray, 
-                          positions: cp.ndarray, 
+    def get_icm_adjustment(self, stack_sizes: cp.ndarray,
+                          positions: cp.ndarray,
                           pot_sizes: cp.ndarray,
                           num_players: int = 6) -> cp.ndarray:
         """
@@ -92,11 +92,15 @@ class ICMModel:
         """
         batch_size = stack_sizes.shape[0]
         
-        # Convert stack sizes to classes
+        # Convert stack sizes to classes using vectorized approach
         stack_classes = cp.zeros(batch_size, dtype=cp.int32)
-        for class_idx, (min_stack, max_stack) in self.stack_classes.items():
-            mask = (stack_sizes >= min_stack) & (stack_sizes < max_stack)
-            stack_classes = cp.where(mask, class_idx, stack_classes)
+        
+        # Create boundary arrays for vectorized classification
+        boundaries = [0.0, 5.0, 10.0, 15.0, 25.0, 40.0, 60.0, 80.0, 100.0, 150.0, 1000.0]
+        
+        for i in range(len(boundaries) - 1):
+            mask = (stack_sizes >= boundaries[i]) & (stack_sizes < boundaries[i + 1])
+            stack_classes = cp.where(mask, i, stack_classes)
         
         # Clamp positions
         positions = cp.clip(positions, 0, 5)
@@ -108,6 +112,11 @@ class ICMModel:
         table_name = f"icm_6max_{num_players}"
         if table_name in self.icm_tables:
             table = self.icm_tables[table_name]
+            # Ensure indices are within bounds
+            stack_classes = cp.clip(stack_classes, 0, table.shape[0] - 1)
+            positions = cp.clip(positions, 0, table.shape[1] - 1)
+            pot_indices = cp.clip(pot_indices, 0, table.shape[2] - 1)
+            
             adjustments = table[stack_classes, positions, pot_indices]
         else:
             adjustments = cp.full(batch_size, 0.5, dtype=cp.float32)
