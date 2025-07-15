@@ -21,8 +21,8 @@ void rollout_kernel(
     
     if (batch_idx >= batch_size) return;
     
-    // Initialize random state
-    unsigned long long state = keys[batch_idx * num_actions + action_idx] + seed + rollout_idx;
+    // Initialize random state - use 1-D keys array
+    unsigned long long state = keys[batch_idx] + seed + rollout_idx;
     
     // Simple poker simulation parameters
     const int stack_size = 10000;  // 100 BB
@@ -53,7 +53,7 @@ void rollout_kernel(
         }
     }
     
-    // Store result
+    // Store result - access 2-D cf_values array correctly
     if (rollout_idx < N_rollouts) {
         atomicAdd(&cf_values[batch_idx * num_actions + action_idx], payoff);
     }
@@ -100,13 +100,22 @@ def mccfr_rollout_gpu(keys_gpu: cp.ndarray, N_rollouts: int = 100, num_actions: 
     
     batch_size = keys_gpu.size
     
+    # DEBUG: verificar límites
+    print(f"DEBUG: keys_gpu min={keys_gpu.min()}, max={keys_gpu.max()}, shape={keys_gpu.shape}")
+    print(f"DEBUG: N_rollouts={N_rollouts}, num_actions={num_actions}")
+    print(f"DEBUG: batch_size={batch_size}")
+    
     # Allocate output array
     cf_values = cp.zeros((batch_size, num_actions), dtype=cp.float32)
+    print(f"DEBUG: cf_values shape={cf_values.shape}")
     
     # Calculate grid and block dimensions
     total_threads = batch_size * num_actions * N_rollouts
     threads_per_block = 256
     blocks_per_grid = (total_threads + threads_per_block - 1) // threads_per_block
+    
+    print(f"DEBUG: total_threads={total_threads}, blocks_per_grid={blocks_per_grid}")
+    print(f"DEBUG: About to launch kernel with {len(keys_gpu)} keys")
     
     # Launch rollout kernel
     rollout_kernel(
