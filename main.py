@@ -126,7 +126,7 @@ def train_model(config: TrainerConfig, num_iterations: int, save_every: int, sav
             logger.info(f"  Unique info sets: {results['unique_info_sets']:,}")
             logger.info(f"  Info sets processed: {results['info_sets_processed']:,}")
             logger.info(f"  Avg payoff: {results['avg_payoff']:.3f}")
-            logger.info(f"  Strategy entropy: {results['strategy_entropy']:.3f}")
+            logger.info(f"  Strategy entropy: {float(results['strategy_entropy']):.3f}")
             logger.info(f"  Elapsed: {elapsed:.1f}s, Rate: {rate:.1f} it/s, ETA: {eta:.1f}s")
             logger.info("-" * 40)
         
