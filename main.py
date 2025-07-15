@@ -114,7 +114,7 @@ def train_model(config: TrainerConfig, num_iterations: int, save_every: int, sav
         game_results = batch_simulate_real_holdem(rng_keys, game_config)
         
         # Training step
-        results = trainer.train_step(game_results)
+        results = trainer.train_step(game_results, iteration=iteration)
         
         # Log progress
         if (iteration + 1) % 10 == 0:

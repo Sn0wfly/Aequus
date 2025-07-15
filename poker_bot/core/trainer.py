@@ -331,10 +331,14 @@ class PokerTrainer:
         total_time = time.time() - start_time
         logger.info(f"🎉 Entrenamiento finalizado en {total_time:.2f} segundos.")
 
-    def train_step(self, game_results: dict):
+    def train_step(self, game_results: dict, *, iteration: int | None = None):
         """
         Paso de entrenamiento con control explícito de dispositivos.
         """
+        if iteration is not None:
+            self.iteration = iteration
+        else:
+            self.iteration += 1
         self.total_games += self.config.batch_size
         batch_size = game_results['payoffs'].shape[0]
         num_players = game_results['payoffs'].shape[1]
@@ -443,7 +447,7 @@ class PokerTrainer:
         else:
             avg_entropy = 0.0
             
-        logger.info(f"   Iteración {self.iteration+1} completada.")
+        logger.info(f"   Iteración {self.iteration} completada.")
         logger.info(f"   📊 Unique info sets: {self.total_unique_info_sets:,}")
         logger.info(f"   📊 Info sets processed: {len(indices_cpu)}")
         logger.info(f"   📊 Growth events: {self.growth_events}")
