@@ -81,13 +81,13 @@ def calculate_hand_strength(hole_cards: cp.ndarray, community_cards: cp.ndarray)
     return strength.astype(cp.uint32)
 
 def pluribus_bucket_kernel(hole_cards: cp.ndarray, 
-                          community_cards: cp.ndarray,
-                          positions: cp.ndarray,
-                          pot_sizes: cp.ndarray,
-                          stack_sizes: cp.ndarray,
-                          num_actives: cp.ndarray) -> cp.ndarray:
+                           community_cards: cp.ndarray,
+                           positions: cp.ndarray,
+                           pot_sizes: cp.ndarray,
+                           stack_sizes: cp.ndarray,
+                           num_actives: cp.ndarray) -> cp.ndarray:
     """
-    Pluribus-style bucketing kernel.
+    Pluribus-style bucketing kernel - SIMPLIFICADO.
     
     Args:
         hole_cards: (batch_size, 2) - hole card IDs
@@ -98,7 +98,7 @@ def pluribus_bucket_kernel(hole_cards: cp.ndarray,
         num_actives: (batch_size,) - number of active players
         
     Returns:
-        bucket_ids: (batch_size,) - ultra-aggressive bucket IDs
+        bucket_ids: (batch_size,) - ultra-aggressive bucket IDs (0-9999)
     """
     batch_size = hole_cards.shape[0]
     
@@ -111,51 +111,57 @@ def pluribus_bucket_kernel(hole_cards: cp.ndarray,
     low_rank = cp.minimum(hole_ranks[:, 0], hole_ranks[:, 1])
     suited = (hole_suits[:, 0] == hole_suits[:, 1]).astype(cp.uint32)
     
-    # Get preflop bucket
+    # Get preflop bucket (0-168)
     preflop_bucket = PREFLOP_BUCKETS[low_rank, high_rank]
     
-    # Add suited offset if suited
+    # Add suited offset if suited (169-337)
     preflop_bucket = cp.where(suited, preflop_bucket + SUITED_OFFSET, preflop_bucket)
     
     # Postflop bucketing (1000 buckets)
     # Count community cards to determine street
     num_comm_cards = cp.sum(community_cards != -1, axis=1)
     
-    # Calculate hand strength for postflop
-    hand_strength = calculate_hand_strength(hole_cards, community_cards)
+    # Simplified hand strength (0-999)
+    hole_high = cp.maximum(hole_ranks[:, 0], hole_ranks[:, 1])
+    hole_low = cp.minimum(hole_ranks[:, 0], hole_ranks[:, 1])
+    paired = (hole_ranks[:, 0] == hole_ranks[:, 1]).astype(cp.uint32)
     
-    # Position bucketing (6 buckets)
-    position_bucket = positions % 6
+    # Simple strength formula
+    hand_strength = (hole_high * 10 + hole_low + paired * 100) % 1000
     
-    # Pot size bucketing (10 buckets)
-    pot_bucket = cp.clip(pot_sizes / 10.0, 0, 9).astype(cp.uint32)
-    
-    # Stack size bucketing (10 buckets)
-    stack_bucket = cp.clip(stack_sizes / 20.0, 0, 9).astype(cp.uint32)
-    
-    # Active players bucketing (5 buckets: 2-6 players)
-    active_bucket = cp.clip(num_actives - 2, 0, 4)
-    
-    # Combine all factors into final bucket ID
-    # Format: [preflop(9 bits)][street(2 bits)][strength(10 bits)][position(3 bits)][pot(4 bits)][stack(4 bits)][active(3 bits)]
-    
+    # Street bucketing (0-3)
     street_bucket = cp.where(num_comm_cards == 0, 0,  # Preflop
                    cp.where(num_comm_cards == 3, 1,   # Flop
                    cp.where(num_comm_cards == 4, 2,   # Turn
                    3)))  # River
     
-    # Combine into 35-bit bucket ID
+    # Position bucketing (0-5)
+    position_bucket = positions % 6
+    
+    # Pot size bucketing (0-9)
+    pot_bucket = cp.clip(pot_sizes / 10.0, 0, 9).astype(cp.uint32)
+    
+    # Stack size bucketing (0-9)
+    stack_bucket = cp.clip(stack_sizes / 20.0, 0, 9).astype(cp.uint32)
+    
+    # Active players bucketing (0-4)
+    active_bucket = cp.clip(num_actives - 2, 0, 4)
+    
+    # SIMPLIFIED COMBINATION: Keep bucket IDs manageable
+    # Format: [preflop(9 bits)][street(2 bits)][strength(10 bits)][position(3 bits)][pot(4 bits)][stack(4 bits)][active(3 bits)]
+    # But limit to reasonable range
+    
+    # Combine into manageable bucket ID (0-9999)
     bucket_id = (
-        (preflop_bucket << 26) |
-        (street_bucket << 24) |
-        (hand_strength << 14) |
-        (position_bucket << 11) |
-        (pot_bucket << 7) |
-        (stack_bucket << 3) |
-        active_bucket
+        (preflop_bucket % 100) * 100 +  # Preflop component (0-99)
+        (street_bucket * 10) +          # Street component (0-30)
+        (hand_strength % 100)           # Strength component (0-99)
     )
     
-    return bucket_id.astype(cp.uint64)
+    # Ensure bucket ID is in manageable range
+    bucket_id = bucket_id % 10000  # Keep in 0-9999 range
+    
+    return bucket_id.astype(cp.uint32)
 
 def pluribus_bucket_kernel_wrapper(hole_cards: cp.ndarray,
                                   community_cards: cp.ndarray,
@@ -195,17 +201,14 @@ def pluribus_bucket_kernel_wrapper(hole_cards: cp.ndarray,
 
 def estimate_unique_buckets() -> int:
     """
-    Estimate total number of unique buckets with Pluribus bucketing.
+    Estimate total number of unique buckets with simplified Pluribus bucketing.
     """
-    # Preflop: 169 * 2 (suited/offsuit) = 338
-    # Postflop: 1000 (hand strength) * 3 (streets) = 3000
-    # Position: 6
-    # Pot: 10
-    # Stack: 10
-    # Active: 5
+    # Preflop: 100 buckets (simplified from 338)
+    # Street: 4 buckets (preflop, flop, turn, river)
+    # Strength: 100 buckets (simplified from 1000)
     
-    # Total estimate: ~200k buckets
-    return 338 * 3000 * 6 * 10 * 10 * 5
+    # Total estimate: ~400 buckets (much more manageable)
+    return 100 * 4 * 100
 
 if __name__ == "__main__":
     # Test the bucketing

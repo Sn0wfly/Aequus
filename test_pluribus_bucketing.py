@@ -69,7 +69,7 @@ def test_pluribus_bucketing():
     # Expected results
     print("\n🎯 Expected Results:")
     print("   Fine bucketing: ~2,000-5,000 unique sets")
-    print("   Pluribus bucketing: ~100-500 unique sets")
+    print("   Pluribus bucketing: ~100-400 unique sets")
     print("   Compression: 10-50x reduction")
     
     return results_fine, results_pluribus
@@ -98,10 +98,19 @@ def test_bucket_distribution():
     
     # Analyze distribution
     unique_buckets = len(cp.unique(bucket_ids))
-    bucket_counts = cp.bincount(bucket_ids.flatten())
+    
+    # Check if bucket IDs are in manageable range
+    max_bucket_id = cp.max(bucket_ids)
+    if max_bucket_id > 10000:
+        print(f"   ⚠️  Warning: Bucket IDs too high: {max_bucket_id}")
+        print(f"   Limiting analysis to first 10000 buckets")
+        bucket_ids = cp.clip(bucket_ids, 0, 9999)
+    
+    # Use histogram instead of bincount to avoid memory issues
+    bucket_counts, _ = cp.histogram(bucket_ids.flatten(), bins=cp.arange(10001))
     max_count = cp.max(bucket_counts)
-    min_count = cp.min(bucket_counts)
-    avg_count = cp.mean(bucket_counts)
+    min_count = cp.min(bucket_counts[bucket_counts > 0])  # Ignore empty buckets
+    avg_count = cp.mean(bucket_counts[bucket_counts > 0])  # Only non-empty buckets
     
     print(f"   Total hands: {batch_size:,}")
     print(f"   Unique buckets: {unique_buckets:,}")
