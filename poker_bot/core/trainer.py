@@ -59,6 +59,7 @@ class TrainerConfig:
     growth_factor: float = 1.5  # Grow by 50% when full
     chunk_size: int = 20000  # Subo chunk_size a 20_000
     gpu_bucket: bool = False  # Placeholder para bucketing en GPU
+    use_pluribus_bucketing: bool = True  # Usar bucketing ultra-agresivo estilo Pluribus
 
 # 🚀 PURE JIT-COMPILED FUNCTION (Outside class for maximum performance)
 @partial(jax.jit, static_argnums=(4, 5))
@@ -245,6 +246,7 @@ class PokerTrainer:
         import cupy as cp
         import numpy as np
         from .bucket_gpu import build_or_get_indices
+        from .pluribus_bucket_gpu import pluribus_bucket_kernel_wrapper
         from .bucket_fine import fine_bucket_kernel_wrapper
         
         # 1. Convertir a CuPy arrays
@@ -255,15 +257,27 @@ class PokerTrainer:
         pot_sizes_gpu = cp.asarray(pot_sizes, dtype=cp.float32)
         num_active_gpu = cp.asarray(num_actives, dtype=cp.int32)
         
-        # 2. Llamar a kernel CUDA de bucketing fino
-        keys_gpu = fine_bucket_kernel_wrapper(
-            hole_cards_gpu,
-            community_cards_gpu,
-            positions_gpu,
-            stack_sizes_gpu,
-            pot_sizes_gpu,
-            num_active_gpu
-        )
+        # 2. Llamar a kernel CUDA de bucketing (Pluribus o fino según configuración)
+        if self.config.use_pluribus_bucketing:
+            # Bucketing ultra-agresivo estilo Pluribus (~200k buckets)
+            keys_gpu = pluribus_bucket_kernel_wrapper(
+                hole_cards_gpu,
+                community_cards_gpu,
+                positions_gpu,
+                pot_sizes_gpu,
+                stack_sizes_gpu,
+                num_active_gpu
+            )
+        else:
+            # Bucketing fino original (millones de buckets)
+            keys_gpu = fine_bucket_kernel_wrapper(
+                hole_cards_gpu,
+                community_cards_gpu,
+                positions_gpu,
+                stack_sizes_gpu,
+                pot_sizes_gpu,
+                num_active_gpu
+            )
         
         # 3. Lookup/inserción en tabla persistente
         indices_gpu = build_or_get_indices(
@@ -383,6 +397,8 @@ class PokerTrainer:
         indices_cpu = cp.asnumpy(indices_gpu)
 
         # Debug: verificar que tenemos keys reales vs indices
+        bucket_type = "PLURIBUS" if self.config.use_pluribus_bucketing else "FINO"
+        print(f"🔧 Bucketing: {bucket_type}")
         print(f"Primeras 5 keys: {cp.asnumpy(keys_gpu)[:5]}")
         print(f"Primeras 5 indices: {cp.asnumpy(indices_gpu)[:5]}")
 
